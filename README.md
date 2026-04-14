@@ -76,6 +76,14 @@ GW 版を使う場合は `run_ensemble_sinkhorn` を `run_ensemble_gw` に差し
 - `key` は `"metrics.marginal_error_row"` のようなドット区切りで
   `op.meta` を辿って値を取ります。
 
+## Consensus edge 抽出のメモリ特性
+
+`consensus_edges` / `weighted_consensus_edges` は source index を
+`block_size` 単位でストリーム処理します。各ブロックでは `(block_size, n_y)`
+の累積バッファ 2 本 (mean / frequency) と、各 run あたり同サイズの一時
+submatrix だけを確保し、`(R, n_x, n_y)` の stack や `(n_x, n_y)` の全平均
+行列は一切作りません。`block_size=None` のときは `min(n_x, 256)` を使います。
+
 ## 永続化 (storage)
 
 - EnsembleOT は **sample × sample の dense な transport 行列をディスクに保存しません**。
