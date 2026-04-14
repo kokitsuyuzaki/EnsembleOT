@@ -1,26 +1,40 @@
-"""Randomized clustering utilities (skeleton)."""
+"""Randomized clustering utilities."""
 
 from __future__ import annotations
 
 import numpy as np
+from sklearn.cluster import KMeans
 
-from .config import ClusteringConfig
+_SUPPORTED = {"kmeans"}
 
 
 def cluster_samples(
     X: np.ndarray,
-    config: ClusteringConfig,
+    method: str,
     n_clusters: int,
-    random_state: int,
+    random_state: int | None,
 ) -> np.ndarray:
-    """Return an integer label vector of shape (n_samples,).
+    """Return integer label vector of shape (n_samples,) in [0, n_clusters).
 
-    Stage 1: skeleton only. Real implementation lands in Stage 2.
+    Stage 3 supports only ``method='kmeans'``.
     """
-    raise NotImplementedError("clustering will be implemented in Stage 2")
+    if method not in _SUPPORTED:
+        raise ValueError(f"unsupported clustering method {method!r}; supported: {_SUPPORTED}")
+    if method == "kmeans":
+        km = KMeans(n_clusters=n_clusters, random_state=random_state, n_init=10)
+        labels = km.fit_predict(X)
+        return labels.astype(np.int64)
+    raise AssertionError("unreachable")
+
+
+def cluster_means(X: np.ndarray, labels: np.ndarray, n_clusters: int) -> np.ndarray:
+    """Per-cluster mean of rows of X. Empty clusters get a zero row."""
+    out = np.zeros((n_clusters, X.shape[1]), dtype=X.dtype)
+    np.add.at(out, labels, X)
+    counts = np.bincount(labels, minlength=n_clusters).astype(out.dtype)
+    counts_safe = np.where(counts > 0, counts, 1.0)
+    return out / counts_safe[:, None]
 
 
 def cluster_sizes(labels: np.ndarray, n_clusters: int) -> np.ndarray:
-    """Count samples per cluster id in [0, n_clusters)."""
-    counts = np.bincount(labels, minlength=n_clusters)
-    return counts.astype(np.int64)
+    return np.bincount(labels, minlength=n_clusters).astype(np.int64)
