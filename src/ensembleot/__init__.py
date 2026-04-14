@@ -10,6 +10,12 @@ from .operator import ImplicitTransportOperator
 from .storage import TrialResult, EnsembleResult
 from .sinkhorn import run_ensemble_sinkhorn
 from .gw import run_ensemble_gw
+from .aggregate import (
+    MeanTransportOperator,
+    ConsensusEdge,
+    make_mean_operator,
+    consensus_edges,
+)
 
 __all__ = [
     "ClusteringConfig",
@@ -21,6 +27,10 @@ __all__ = [
     "EnsembleResult",
     "run_ensemble_sinkhorn",
     "run_ensemble_gw",
+    "MeanTransportOperator",
+    "ConsensusEdge",
+    "make_mean_operator",
+    "consensus_edges",
 ]
 
 __version__ = "0.0.1"
