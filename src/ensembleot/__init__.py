@@ -12,9 +12,12 @@ from .sinkhorn import run_ensemble_sinkhorn
 from .gw import run_ensemble_gw
 from .aggregate import (
     MeanTransportOperator,
+    WeightedMeanTransportOperator,
     ConsensusEdge,
     make_mean_operator,
+    make_weighted_mean_operator,
     consensus_edges,
+    weighted_consensus_edges,
 )
 from .io import (
     save_operators,
@@ -36,9 +39,12 @@ __all__ = [
     "run_ensemble_sinkhorn",
     "run_ensemble_gw",
     "MeanTransportOperator",
+    "WeightedMeanTransportOperator",
     "ConsensusEdge",
     "make_mean_operator",
+    "make_weighted_mean_operator",
     "consensus_edges",
+    "weighted_consensus_edges",
     "save_operators",
     "load_operators",
     "save_mean_operator",
