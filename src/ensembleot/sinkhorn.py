@@ -92,7 +92,6 @@ def run_ensemble_sinkhorn(
     clustering_method: str = "kmeans",
     solver_method: SolverMethod = "sinkhorn",
     random_state: int | None = None,
-    return_runs: bool = True,
     reg: float = 0.1,
     numItermax: int = 1000,
     stopThr: float = 1e-6,
@@ -102,8 +101,8 @@ def run_ensemble_sinkhorn(
     Returns
     -------
     list[ImplicitTransportOperator]
-        One operator per run when ``return_runs=True``. (Aggregation
-        across runs lands in a later stage.)
+        One operator per run. Aggregation across runs lands in a later stage —
+        for now the caller gets the raw per-run operators back.
     """
     if n_runs < 1:
         raise ValueError("n_runs must be >= 1")
@@ -115,7 +114,7 @@ def run_ensemble_sinkhorn(
     rng = np.random.default_rng(random_state)
     seeds = [int(s) for s in rng.integers(0, 2**31 - 1, size=n_runs)]
 
-    runs = [
+    return [
         _single_run(
             X, Y,
             n_clusters_x=n_clusters_x,
@@ -129,7 +128,3 @@ def run_ensemble_sinkhorn(
         )
         for seed in seeds
     ]
-
-    if not return_runs:
-        return runs[:1]
-    return runs

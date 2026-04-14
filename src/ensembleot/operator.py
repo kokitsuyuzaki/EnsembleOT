@@ -13,9 +13,21 @@ Uniform lifting. For a sample i in cluster a and j in cluster b:
 
     T[i, j] = T_cluster[a, b] / (m_x[a] * m_y[b])
 
-where m_x[a], m_y[b] are the per-cluster normalizers (`cluster_mass_x`,
-`cluster_mass_y`). With uniform sample weights these are simply the
-cluster cardinalities |C_a|, |D_b|.
+`cluster_mass_x`, `cluster_mass_y` are **per-cluster normalization factors**
+used in the lifting — not specifically cluster cardinalities. The caller
+chooses the semantics:
+
+  * cardinality  (m_a = |C_a|)        — matches the Stage-1 uniform-lifting spec
+                                        and is what the current Sinkhorn
+                                        pipeline supplies.
+  * sample mass  (m_a = |C_a| / n_x)  — also supported; the operator is
+                                        agnostic and simply divides by
+                                        whatever factors the caller stores.
+
+What the operator requires is only that the same normalizer appears in
+`T[i,j] = T_cluster[a,b] / (m_x[a] m_y[b])` consistently across
+`materialize_entry`, `materialize_dense`, and the apply routines — which
+it does.
 """
 
 from __future__ import annotations
