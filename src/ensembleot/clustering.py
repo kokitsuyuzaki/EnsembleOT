@@ -14,16 +14,28 @@ def cluster_samples(
     n_clusters: int,
     random_state: int | None,
 ) -> np.ndarray:
-    """Return integer label vector of shape (n_samples,) in [0, n_clusters).
+    """Return integer label vector of shape (n_samples,) in [0, n_clusters)."""
+    labels, _ = cluster_samples_with_info(X, method, n_clusters, random_state)
+    return labels
 
-    Stage 3 supports only ``method='kmeans'``.
+
+def cluster_samples_with_info(
+    X: np.ndarray,
+    method: str,
+    n_clusters: int,
+    random_state: int | None,
+) -> tuple[np.ndarray, dict]:
+    """Cluster and return (labels, info) with solver-specific diagnostics.
+
+    Stage 7 supports only ``method='kmeans'``; for kmeans ``info`` contains
+    ``{"inertia": float}``.
     """
     if method not in _SUPPORTED:
         raise ValueError(f"unsupported clustering method {method!r}; supported: {_SUPPORTED}")
     if method == "kmeans":
         km = KMeans(n_clusters=n_clusters, random_state=random_state, n_init=10)
-        labels = km.fit_predict(X)
-        return labels.astype(np.int64)
+        labels = km.fit_predict(X).astype(np.int64)
+        return labels, {"inertia": float(km.inertia_)}
     raise AssertionError("unreachable")
 
 

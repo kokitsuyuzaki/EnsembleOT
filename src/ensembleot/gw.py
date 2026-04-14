@@ -21,7 +21,8 @@ import numpy as np
 import ot
 import ot.gromov
 
-from .clustering import cluster_means, cluster_samples, cluster_sizes
+from .clustering import cluster_means, cluster_samples_with_info, cluster_sizes
+from .metrics import cluster_shape_metrics, transport_metrics
 from .operator import ImplicitTransportOperator
 
 GWSolverMethod = Literal["gw", "entropic_gw"]
@@ -66,8 +67,8 @@ def _single_run(
     seed: int,
 ) -> ImplicitTransportOperator:
     n_x, n_y = X.shape[0], Y.shape[0]
-    labels_x = cluster_samples(X, clustering_method, n_clusters_x, random_state=seed)
-    labels_y = cluster_samples(Y, clustering_method, n_clusters_y, random_state=seed + 1)
+    labels_x, info_x = cluster_samples_with_info(X, clustering_method, n_clusters_x, random_state=seed)
+    labels_y, info_y = cluster_samples_with_info(Y, clustering_method, n_clusters_y, random_state=seed + 1)
 
     centers_x = cluster_means(X, labels_x, n_clusters_x)
     centers_y = cluster_means(Y, labels_y, n_clusters_y)
@@ -95,12 +96,34 @@ def _single_run(
         tol=tol,
     )
 
+    metrics = cluster_shape_metrics(labels_x, labels_y, sizes_x, sizes_y, T_cluster)
+    metrics.update(transport_metrics(T_cluster, a, b))
+    if "inertia" in info_x:
+        metrics["clustering_inertia_x"] = float(info_x["inertia"])
+    if "inertia" in info_y:
+        metrics["clustering_inertia_y"] = float(info_y["inertia"])
+
+    meta = {
+        "solver_family": "gw",
+        "solver_name": solver_method,
+        "clustering_method": clustering_method,
+        "seed": int(seed),
+        "solver_params": {
+            "loss_fun": str(loss_fun),
+            "epsilon": float(epsilon),
+            "max_iter": int(max_iter),
+            "tol": float(tol),
+        },
+        "metrics": metrics,
+    }
+
     return ImplicitTransportOperator(
         labels_x=labels_x,
         labels_y=labels_y,
         T_cluster=T_cluster,
         cluster_mass_x=sizes_x,
         cluster_mass_y=sizes_y,
+        meta=meta,
     )
 
 
