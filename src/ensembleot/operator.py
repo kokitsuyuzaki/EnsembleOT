@@ -32,7 +32,8 @@ it does.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 import numpy as np
 
@@ -46,6 +47,7 @@ class ImplicitTransportOperator:
     T_cluster: np.ndarray         # (K_x, K_y)
     cluster_mass_x: np.ndarray    # (K_x,)
     cluster_mass_y: np.ndarray    # (K_y,)
+    meta: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         K_x, K_y = self.T_cluster.shape

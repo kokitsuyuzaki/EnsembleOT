@@ -15,6 +15,15 @@ sample-level lifting. Backend: [POT](https://pythonot.github.io/).
   現状 `run_ensemble_sinkhorn` は各 run の `ImplicitTransportOperator` を
   そのままリストで返すだけのミニマル実装です。
 
+## 永続化 (storage)
+
+- EnsembleOT は **sample × sample の dense な transport 行列をディスクに保存しません**。
+- 保存対象は各 run の compact operator 表現 (`labels_x`, `labels_y`,
+  `cluster_mass_x`, `cluster_mass_y`, `T_cluster`, meta) のみで、これを
+  単一の `.npz` にまとめます (`save_operators` / `load_operators`)。
+- `MeanTransportOperator` も構成要素の operators を保存し、ロード時に
+  再構築する方式です (`save_mean_operator` / `load_mean_operator`)。
+
 ## 設計上の不変条件
 
 - サンプル × サンプルの巨大な輸送行列 `T` は通常処理で作らない。

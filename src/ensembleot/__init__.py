@@ -16,6 +16,14 @@ from .aggregate import (
     make_mean_operator,
     consensus_edges,
 )
+from .io import (
+    save_operators,
+    load_operators,
+    save_mean_operator,
+    load_mean_operator,
+    StorageFormatError,
+    FORMAT_VERSION,
+)
 
 __all__ = [
     "ClusteringConfig",
@@ -31,6 +39,12 @@ __all__ = [
     "ConsensusEdge",
     "make_mean_operator",
     "consensus_edges",
+    "save_operators",
+    "load_operators",
+    "save_mean_operator",
+    "load_mean_operator",
+    "StorageFormatError",
+    "FORMAT_VERSION",
 ]
 
 __version__ = "0.0.1"
