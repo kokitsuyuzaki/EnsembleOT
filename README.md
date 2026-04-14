@@ -15,6 +15,17 @@ sample-level lifting. Backend: [POT](https://pythonot.github.io/).
   現状 `run_ensemble_sinkhorn` は各 run の `ImplicitTransportOperator` を
   そのままリストで返すだけのミニマル実装です。
 
+## Run weights from metrics
+
+- 各 run の `op.meta["metrics"]` から、`compute_run_weights(operators, policy=..., key=...)`
+  で weighted aggregation 用の run-weight ベクトル (非負・総和 1) を生成できます。
+- 得られた weights はそのまま `make_weighted_mean_operator` /
+  `weighted_consensus_edges` に渡せます。
+- 対応 policy: `"uniform"`, `"inverse"`, `"softmax_negative"`,
+  `"softmax_positive"`, `"rank_inverse"`。
+- `key` は `"metrics.marginal_error_row"` のようなドット区切りで
+  `op.meta` を辿って値を取ります。
+
 ## 永続化 (storage)
 
 - EnsembleOT は **sample × sample の dense な transport 行列をディスクに保存しません**。

@@ -19,6 +19,7 @@ from .aggregate import (
     consensus_edges,
     weighted_consensus_edges,
 )
+from .weights import compute_run_weights, extract_metric, normalize_weights
 from .io import (
     save_operators,
     load_operators,
@@ -51,6 +52,9 @@ __all__ = [
     "load_mean_operator",
     "StorageFormatError",
     "FORMAT_VERSION",
+    "compute_run_weights",
+    "extract_metric",
+    "normalize_weights",
 ]
 
 __version__ = "0.0.1"
