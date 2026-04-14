@@ -15,6 +15,56 @@ sample-level lifting. Backend: [POT](https://pythonot.github.io/).
   現状 `run_ensemble_sinkhorn` は各 run の `ImplicitTransportOperator` を
   そのままリストで返すだけのミニマル実装です。
 
+## End-to-end 使用例 (Sinkhorn + metric-weighted aggregation)
+
+```python
+import numpy as np
+from ensembleot import (
+    run_ensemble_sinkhorn,
+    make_metric_weighted_mean_operator,
+    metric_weighted_consensus_edges,
+)
+
+rng = np.random.default_rng(0)
+X = rng.standard_normal((200, 10))
+Y = rng.standard_normal((180, 10)) + 0.3
+
+# 1. 複数 run の cluster-level OT を解く
+runs = run_ensemble_sinkhorn(
+    X, Y,
+    n_clusters_x=15, n_clusters_y=12,
+    n_runs=8,
+    solver_method="sinkhorn",
+    reg=0.05,
+    random_state=42,
+)
+
+# 2. marginal 誤差が小さい run ほど重視した weighted mean operator
+mean_op = make_metric_weighted_mean_operator(
+    runs,
+    policy="inverse",
+    key="metrics.marginal_error_row",
+)
+
+# 3. Y 側の特徴量を X 側へ搬送 (full T を作らない)
+F_y = rng.standard_normal((Y.shape[0], 4))
+F_x = mean_op.apply_to_features(F_y)      # shape (200, 4)
+
+# 4. 全 run で一貫して強い edge のみ抽出
+edges = metric_weighted_consensus_edges(
+    runs,
+    threshold=1e-4,
+    policy="softmax_negative",
+    key="metrics.transport_entropy",
+    temperature=0.5,
+    min_frequency=0.75,
+    topk_per_source=3,
+)
+```
+
+GW 版を使う場合は `run_ensemble_sinkhorn` を `run_ensemble_gw` に差し替えるだけで、
+以降の aggregation パイプラインはそのまま使えます。
+
 ## Run weights from metrics
 
 - 各 run の `op.meta["metrics"]` から、`compute_run_weights(operators, policy=..., key=...)`

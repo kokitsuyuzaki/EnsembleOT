@@ -20,6 +20,10 @@ from .aggregate import (
     weighted_consensus_edges,
 )
 from .weights import compute_run_weights, extract_metric, normalize_weights
+from .convenience import (
+    make_metric_weighted_mean_operator,
+    metric_weighted_consensus_edges,
+)
 from .io import (
     save_operators,
     load_operators,
@@ -55,6 +59,8 @@ __all__ = [
     "compute_run_weights",
     "extract_metric",
     "normalize_weights",
+    "make_metric_weighted_mean_operator",
+    "metric_weighted_consensus_edges",
 ]
 
 __version__ = "0.0.1"
