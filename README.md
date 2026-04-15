@@ -7,8 +7,13 @@ sample-level lifting. Backend: [POT](https://pythonot.github.io/).
 
 - **Sinkhorn 系と Gromov–Wasserstein 系は別のエントリポイント**として提供します。
   1 つの関数に両者を統合しません。
-  - `run_ensemble_sinkhorn(...)` — entropic / EMD 系
-  - `run_ensemble_gw(...)` — Gromov–Wasserstein 系
+  - `run_ensemble_sinkhorn(...)` — entropic / EMD 系 (feature cost のみ)
+  - `run_ensemble_gw(...)` — Gromov–Wasserstein 系 (structure cost のみ)
+  - `run_ensemble_fgw(...)` — Fused Gromov–Wasserstein 系 (feature + structure を同時に使う)
+    - Stage 12a の最小実装は **X, Y が同じ feature 次元を持つ場合に限定** しています。
+    - `alpha` の意味は POT の FGW 実装 (`ot.gromov.fused_gromov_wasserstein` /
+      `ot.gromov.entropic_fused_gromov_wasserstein`) にそのまま準拠します。
+      EnsembleOT 側で再定義はしません。
 - **現段階では `run_ensemble_sinkhorn` のみ実装済み**です。
   `run_ensemble_gw` は後続 Stage で実装され、現状は `NotImplementedError` を返します。
 - **複数試行の集約 (aggregation) と結果の永続化 (storage) は後続 Stage** で追加します。

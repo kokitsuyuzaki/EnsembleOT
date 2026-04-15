@@ -10,6 +10,7 @@ from .operator import ImplicitTransportOperator
 from .storage import TrialResult, EnsembleResult
 from .sinkhorn import run_ensemble_sinkhorn
 from .gw import run_ensemble_gw
+from .fgw import run_ensemble_fgw
 from .aggregate import (
     MeanTransportOperator,
     WeightedMeanTransportOperator,
@@ -43,6 +44,7 @@ __all__ = [
     "EnsembleResult",
     "run_ensemble_sinkhorn",
     "run_ensemble_gw",
+    "run_ensemble_fgw",
     "MeanTransportOperator",
     "WeightedMeanTransportOperator",
     "ConsensusEdge",
