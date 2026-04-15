@@ -10,15 +10,19 @@ sample-level lifting. Backend: [POT](https://pythonot.github.io/).
   - `run_ensemble_sinkhorn(...)` — entropic / EMD 系 (feature cost のみ)
   - `run_ensemble_gw(...)` — Gromov–Wasserstein 系 (structure cost のみ)
   - `run_ensemble_fgw(...)` — Fused Gromov–Wasserstein 系 (feature + structure を同時に使う)
-    - Stage 12a の最小実装は **X, Y が同じ feature 次元を持つ場合に限定** しています。
-    - `alpha` の意味は POT の FGW 実装 (`ot.gromov.fused_gromov_wasserstein` /
-      `ot.gromov.entropic_fused_gromov_wasserstein`) にそのまま準拠します。
+    - Stage 12a (デフォルト挙動): **X, Y が同じ feature 次元を持つ場合のみ**。
+      `M = ot.dist(centers_x, centers_y, metric=...)` を内部で自動生成します。
+    - Stage 12b 拡張: `cross_feature_cost_fn=...` を渡せば、各 run の
+      cluster-level cross-domain cost `M` (shape `(K_x, K_y)`) を外部から
+      供給できます。これにより `X.shape[1] != Y.shape[1]` の **cross-modal
+      FGW** が可能になります。callable は `centers_x`, `centers_y`,
+      `labels_x`, `labels_y`, `seed`, `metric` 等を受け取り、追加引数は
+      `cross_feature_cost_kwargs` で渡します。
+    - `alpha` の意味は引き続き POT の FGW 実装 (`ot.gromov.fused_gromov_wasserstein`
+      / `ot.gromov.entropic_fused_gromov_wasserstein`) にそのまま準拠します。
       EnsembleOT 側で再定義はしません。
-- **現段階では `run_ensemble_sinkhorn` のみ実装済み**です。
-  `run_ensemble_gw` は後続 Stage で実装され、現状は `NotImplementedError` を返します。
-- **複数試行の集約 (aggregation) と結果の永続化 (storage) は後続 Stage** で追加します。
-  現状 `run_ensemble_sinkhorn` は各 run の `ImplicitTransportOperator` を
-  そのままリストで返すだけのミニマル実装です。
+- Sinkhorn / GW / FGW の 3 エントリポイント、複数試行の集約 (aggregation)、
+  metrics、weighted aggregation、結果の永続化 (storage) はいずれも実装済みです。
 
 ## End-to-end 使用例 (Sinkhorn + metric-weighted aggregation)
 
