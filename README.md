@@ -74,6 +74,15 @@ edges = metric_weighted_consensus_edges(
 GW 版を使う場合は `run_ensemble_sinkhorn` を `run_ensemble_gw` に差し替えるだけで、
 以降の aggregation パイプラインはそのまま使えます。
 
+## Clustering backends
+
+- `"kmeans"` (デフォルト) — scikit-learn の k-means。反復最適化あり。
+- `"random_voronoi"` — X からランダムに seed 点を選び、各サンプルを最寄り
+  seed に割り当てる Voronoi 型の空間分割。反復更新を行わないため高速で、
+  毎 run で異なる粗い空間区切りを作る用途に向きます。
+  `run_ensemble_sinkhorn` / `run_ensemble_gw` / `run_ensemble_fgw` のいずれ
+  でも `clustering_method="random_voronoi"` で利用できます。
+
 ## Run weights from metrics
 
 - 各 run の `op.meta["metrics"]` から、`compute_run_weights(operators, policy=..., key=...)`
