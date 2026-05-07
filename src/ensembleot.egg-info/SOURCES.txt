@@ -7,6 +7,7 @@ src/ensembleot/clustering.py
 src/ensembleot/config.py
 src/ensembleot/convenience.py
 src/ensembleot/ensemble.py
+src/ensembleot/fgw.py
 src/ensembleot/gw.py
 src/ensembleot/io.py
 src/ensembleot/lifting.py
@@ -23,9 +24,12 @@ src/ensembleot.egg-info/top_level.txt
 tests/test_aggregate.py
 tests/test_consensus_streaming.py
 tests/test_convenience.py
+tests/test_fgw.py
+tests/test_fgw_custom_m.py
 tests/test_gw.py
 tests/test_metrics.py
 tests/test_operator.py
+tests/test_random_voronoi.py
 tests/test_sinkhorn.py
 tests/test_smoke.py
 tests/test_storage.py

@@ -130,10 +130,14 @@ def _single_run(
     seed: int,
     cross_feature_cost_fn: CrossFeatureCostFn | None,
     cross_feature_cost_kwargs: Mapping[str, Any] | None,
+    coords_x: np.ndarray | None = None,
+    coords_y: np.ndarray | None = None,
 ) -> ImplicitTransportOperator:
     n_x, n_y = X.shape[0], Y.shape[0]
-    labels_x, info_x = cluster_samples_with_info(X, clustering_method, n_clusters_x, random_state=seed)
-    labels_y, info_y = cluster_samples_with_info(Y, clustering_method, n_clusters_y, random_state=seed + 1)
+    cluster_input_x = coords_x if coords_x is not None else X
+    cluster_input_y = coords_y if coords_y is not None else Y
+    labels_x, info_x = cluster_samples_with_info(cluster_input_x, clustering_method, n_clusters_x, random_state=seed)
+    labels_y, info_y = cluster_samples_with_info(cluster_input_y, clustering_method, n_clusters_y, random_state=seed + 1)
 
     centers_x = cluster_means(X, labels_x, n_clusters_x)
     centers_y = cluster_means(Y, labels_y, n_clusters_y)
@@ -241,6 +245,8 @@ def run_ensemble_fgw(
     tol: float = 1e-6,
     cross_feature_cost_fn: CrossFeatureCostFn | None = None,
     cross_feature_cost_kwargs: Mapping[str, Any] | None = None,
+    coords_x: np.ndarray | None = None,
+    coords_y: np.ndarray | None = None,
 ) -> list[ImplicitTransportOperator]:
     """Run an ensemble of cluster-level Fused Gromov-Wasserstein OT trials.
 
@@ -320,6 +326,8 @@ def run_ensemble_fgw(
             seed=seed,
             cross_feature_cost_fn=cross_feature_cost_fn,
             cross_feature_cost_kwargs=cross_feature_cost_kwargs,
+            coords_x=coords_x,
+            coords_y=coords_y,
         )
         for seed in seeds
     ]

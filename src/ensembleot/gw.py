@@ -65,10 +65,16 @@ def _single_run(
     max_iter: int,
     tol: float,
     seed: int,
+    coords_x: np.ndarray | None = None,
+    coords_y: np.ndarray | None = None,
 ) -> ImplicitTransportOperator:
     n_x, n_y = X.shape[0], Y.shape[0]
-    labels_x, info_x = cluster_samples_with_info(X, clustering_method, n_clusters_x, random_state=seed)
-    labels_y, info_y = cluster_samples_with_info(Y, clustering_method, n_clusters_y, random_state=seed + 1)
+    # When spatial coordinates are provided, use them for clustering
+    # instead of features.  Feature-space centers are still computed from X/Y.
+    cluster_input_x = coords_x if coords_x is not None else X
+    cluster_input_y = coords_y if coords_y is not None else Y
+    labels_x, info_x = cluster_samples_with_info(cluster_input_x, clustering_method, n_clusters_x, random_state=seed)
+    labels_y, info_y = cluster_samples_with_info(cluster_input_y, clustering_method, n_clusters_y, random_state=seed + 1)
 
     centers_x = cluster_means(X, labels_x, n_clusters_x)
     centers_y = cluster_means(Y, labels_y, n_clusters_y)
@@ -140,6 +146,8 @@ def run_ensemble_gw(
     epsilon: float = 0.05,
     max_iter: int = 1000,
     tol: float = 1e-6,
+    coords_x: np.ndarray | None = None,
+    coords_y: np.ndarray | None = None,
 ) -> list[ImplicitTransportOperator]:
     """Run an ensemble of cluster-level Gromov-Wasserstein OT trials.
 
@@ -147,6 +155,12 @@ def run_ensemble_gw(
     K_x × K_y cluster-level GW coupling and returns an implicit
     sample-level transport operator via uniform lifting. Aggregation and
     storage land in a later stage.
+
+    Parameters
+    ----------
+    coords_x, coords_y : optional spatial coordinates (n, 2).
+        When provided, clustering is performed on these coordinates
+        instead of on X/Y.  Useful for random_voronoi in spatial mode.
     """
     if n_runs < 1:
         raise ValueError("n_runs must be >= 1")
@@ -168,6 +182,8 @@ def run_ensemble_gw(
             max_iter=max_iter,
             tol=tol,
             seed=seed,
+            coords_x=coords_x,
+            coords_y=coords_y,
         )
         for seed in seeds
     ]
