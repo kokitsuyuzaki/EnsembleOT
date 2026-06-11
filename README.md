@@ -57,7 +57,7 @@ mean_op = make_metric_weighted_mean_operator(
 
 # 3. Y 側の特徴量を X 側へ搬送 (full T を作らない)
 F_y = rng.standard_normal((Y.shape[0], 4))
-F_x = mean_op.apply_to_features(F_y)      # shape (200, 4)
+F_x = mean_op.apply_to_features(F_y)      # shape (200, 4); 既定で行正規化 (barycentric)
 
 # 4. 全 run で一貫して強い edge のみ抽出
 edges = metric_weighted_consensus_edges(
@@ -115,5 +115,26 @@ submatrix だけを確保し、`(R, n_x, n_y)` の stack や `(n_x, n_y)` の全
 
 - サンプル × サンプルの巨大な輸送行列 `T` は通常処理で作らない。
 - 各 run の輸送は `ImplicitTransportOperator` で implicit に保持し、
-  `apply_to_features` / `apply_transpose_to_features` で `T @ Y`, `T.T @ X`
-  をクラスタ経由で計算する。
+  `apply_to_features` / `apply_transpose_to_features` で特徴量をクラスタ経由で
+  搬送する。
+
+## 特徴量搬送の正規化 (`normalize`, v0.1.0〜)
+
+`apply_to_features(F_y)` / `apply_transpose_to_features(F_x)` は **既定で
+行正規化 (`normalize=True`)** を行い、各搬送先サンプルについて
+「対応づけ重み Σ_j T[i,j] で割った加重平均」= barycentric projection
+(条件付き平均 E[F_y | x_i]) を返します。出力は `F_y` と同じスケールです。
+
+> **v0.0.x からの破壊的変更:** 旧実装は生の線形作用素 `T @ F_y` を返して
+> いました。OT の制約から `T` の各行和は `1/n_x` になるため、出力は元の
+> 特徴量の約 `1/n_x` に縮み、分布のメリハリ (裾) が潰れて見える問題が
+> ありました。v0.1.0 で既定を正規化に変更しています。
+
+- 生の作用素 `T @ F` (および `T.T @ X`) が必要な場合のみ
+  `normalize=False` を指定してください。`MeanTransportOperator` /
+  `WeightedMeanTransportOperator` も同じ `normalize` 引数を受け取り、
+  集約後の輸送に対して同様に正規化します。
+- なお `normalize` はスケール (=見かけのメリハリ) を直す処理です。
+  搬送先クラスタ内の分散はクラスタ平均化で失われるため、より鋭い裾が
+  必要なときは `reg` を下げる / `solver_method="emd"` / クラスタ数を
+  増やすといったチューニングを併用してください。

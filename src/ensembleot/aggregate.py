@@ -60,17 +60,31 @@ class MeanTransportOperator:
     def shape(self) -> tuple[int, int]:
         return self.operators[0].shape
 
-    def apply_to_features(self, Y: np.ndarray) -> np.ndarray:
-        acc = self.operators[0].apply_to_features(Y)
+    def apply_to_features(self, Y: np.ndarray, normalize: bool = True) -> np.ndarray:
+        acc = self.operators[0].apply_to_features(Y, normalize=False)
         for op in self.operators[1:]:
-            acc = acc + op.apply_to_features(Y)
-        return acc / float(self.n_runs)
+            acc = acc + op.apply_to_features(Y, normalize=False)
+        if not normalize:
+            return acc / float(self.n_runs)
+        ones = np.ones(self.shape[1], dtype=float)
+        denom = self.operators[0].apply_to_features(ones, normalize=False)
+        for op in self.operators[1:]:
+            denom = denom + op.apply_to_features(ones, normalize=False)
+        denom = np.where(np.abs(denom) > 1e-30, denom, 1.0)
+        return acc / (denom[:, None] if acc.ndim == 2 else denom)
 
-    def apply_transpose_to_features(self, X: np.ndarray) -> np.ndarray:
-        acc = self.operators[0].apply_transpose_to_features(X)
+    def apply_transpose_to_features(self, X: np.ndarray, normalize: bool = True) -> np.ndarray:
+        acc = self.operators[0].apply_transpose_to_features(X, normalize=False)
         for op in self.operators[1:]:
-            acc = acc + op.apply_transpose_to_features(X)
-        return acc / float(self.n_runs)
+            acc = acc + op.apply_transpose_to_features(X, normalize=False)
+        if not normalize:
+            return acc / float(self.n_runs)
+        ones = np.ones(self.shape[0], dtype=float)
+        denom = self.operators[0].apply_transpose_to_features(ones, normalize=False)
+        for op in self.operators[1:]:
+            denom = denom + op.apply_transpose_to_features(ones, normalize=False)
+        denom = np.where(np.abs(denom) > 1e-30, denom, 1.0)
+        return acc / (denom[:, None] if acc.ndim == 2 else denom)
 
     def materialize_dense(self) -> np.ndarray:
         """Debug/testing only. Do not call on large problems."""
@@ -139,19 +153,33 @@ class WeightedMeanTransportOperator:
     def shape(self) -> tuple[int, int]:
         return self.operators[0].shape
 
-    def apply_to_features(self, Y: np.ndarray) -> np.ndarray:
+    def apply_to_features(self, Y: np.ndarray, normalize: bool = True) -> np.ndarray:
         w = self.weights
-        acc = w[0] * self.operators[0].apply_to_features(Y)
+        acc = w[0] * self.operators[0].apply_to_features(Y, normalize=False)
         for k in range(1, len(self.operators)):
-            acc = acc + w[k] * self.operators[k].apply_to_features(Y)
-        return acc
+            acc = acc + w[k] * self.operators[k].apply_to_features(Y, normalize=False)
+        if not normalize:
+            return acc
+        ones = np.ones(self.shape[1], dtype=float)
+        denom = w[0] * self.operators[0].apply_to_features(ones, normalize=False)
+        for k in range(1, len(self.operators)):
+            denom = denom + w[k] * self.operators[k].apply_to_features(ones, normalize=False)
+        denom = np.where(np.abs(denom) > 1e-30, denom, 1.0)
+        return acc / (denom[:, None] if acc.ndim == 2 else denom)
 
-    def apply_transpose_to_features(self, X: np.ndarray) -> np.ndarray:
+    def apply_transpose_to_features(self, X: np.ndarray, normalize: bool = True) -> np.ndarray:
         w = self.weights
-        acc = w[0] * self.operators[0].apply_transpose_to_features(X)
+        acc = w[0] * self.operators[0].apply_transpose_to_features(X, normalize=False)
         for k in range(1, len(self.operators)):
-            acc = acc + w[k] * self.operators[k].apply_transpose_to_features(X)
-        return acc
+            acc = acc + w[k] * self.operators[k].apply_transpose_to_features(X, normalize=False)
+        if not normalize:
+            return acc
+        ones = np.ones(self.shape[0], dtype=float)
+        denom = w[0] * self.operators[0].apply_transpose_to_features(ones, normalize=False)
+        for k in range(1, len(self.operators)):
+            denom = denom + w[k] * self.operators[k].apply_transpose_to_features(ones, normalize=False)
+        denom = np.where(np.abs(denom) > 1e-30, denom, 1.0)
+        return acc / (denom[:, None] if acc.ndim == 2 else denom)
 
     def materialize_dense(self) -> np.ndarray:
         """Debug/testing only. Do not call on large problems."""

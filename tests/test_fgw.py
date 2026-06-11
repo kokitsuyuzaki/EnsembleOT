@@ -75,7 +75,7 @@ def test_apply_to_features_matches_dense_lifted():
     )[0]
     rng = np.random.default_rng(123)
     F = rng.standard_normal((op.n_y, 4))
-    implicit = op.apply_to_features(F)
+    implicit = op.apply_to_features(F, normalize=False)
     dense = op.materialize_dense() @ F
     np.testing.assert_allclose(implicit, dense, atol=1e-10, rtol=1e-10)
 

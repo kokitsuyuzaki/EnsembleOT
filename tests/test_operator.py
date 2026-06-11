@@ -61,9 +61,35 @@ def test_apply_to_features_matches_dense(n_x, n_y, K_x, K_y, mass_mode):
     F = 6
     Y = rng.standard_normal((n_y, F))
 
-    implicit = op.apply_to_features(Y)
+    implicit = op.apply_to_features(Y, normalize=False)
     dense = op.materialize_dense() @ Y
     np.testing.assert_allclose(implicit, dense, atol=1e-10, rtol=1e-10)
+
+
+@pytest.mark.parametrize("mass_mode", ["cardinality", "fractional"])
+@pytest.mark.parametrize(
+    "n_x, n_y, K_x, K_y",
+    [(12, 9, 3, 2), (20, 15, 5, 4), (7, 8, 4, 3)],
+)
+def test_apply_to_features_normalized_matches_row_normalized_dense(
+    n_x, n_y, K_x, K_y, mass_mode
+):
+    """Default (normalize=True) == barycentric projection of the dense plan."""
+    rng = np.random.default_rng(42)
+    op = _random_operator(rng, n_x, n_y, K_x, K_y, mass_mode)
+    Y = rng.standard_normal((n_y, 6))
+
+    T = op.materialize_dense()
+    rowsum = T.sum(axis=1, keepdims=True)
+    bary = (T @ Y) / np.where(rowsum > 0, rowsum, 1.0)
+
+    np.testing.assert_allclose(
+        op.apply_to_features(Y), bary, atol=1e-10, rtol=1e-10
+    )
+    # normalized rows of a barycentric map: each output is a convex
+    # combination of target features, so it lies within their range.
+    assert op.apply_to_features(Y).max() <= Y.max() + 1e-9
+    assert op.apply_to_features(Y).min() >= Y.min() - 1e-9
 
 
 @pytest.mark.parametrize(
@@ -74,7 +100,7 @@ def test_apply_transpose_matches_dense(n_x, n_y, K_x, K_y):
     rng = np.random.default_rng(7)
     op = _random_operator(rng, n_x, n_y, K_x, K_y)
     X = rng.standard_normal((n_x, 4))
-    implicit = op.apply_transpose_to_features(X)
+    implicit = op.apply_transpose_to_features(X, normalize=False)
     dense = op.materialize_dense().T @ X
     np.testing.assert_allclose(implicit, dense, atol=1e-10, rtol=1e-10)
 
@@ -83,7 +109,7 @@ def test_1d_feature_input_is_supported():
     rng = np.random.default_rng(0)
     op = _random_operator(rng, 10, 8, 3, 2)
     y = rng.standard_normal(op.n_y)
-    out = op.apply_to_features(y)
+    out = op.apply_to_features(y, normalize=False)
     assert out.shape == (op.n_x,)
     np.testing.assert_allclose(out, op.materialize_dense() @ y, atol=1e-10)
 

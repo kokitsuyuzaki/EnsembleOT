@@ -46,7 +46,7 @@ def test_mean_operator_apply_matches_dense_average():
     mean_op = make_mean_operator(ops)
     rng = np.random.default_rng(99)
     F = rng.standard_normal((mean_op.shape[1], 5))
-    implicit = mean_op.apply_to_features(F)
+    implicit = mean_op.apply_to_features(F, normalize=False)
     dense_mean = np.mean([op.materialize_dense() for op in ops], axis=0)
     expected = dense_mean @ F
     np.testing.assert_allclose(implicit, expected, atol=1e-10, rtol=1e-10)
@@ -57,7 +57,7 @@ def test_mean_operator_apply_transpose_matches_dense_average():
     mean_op = make_mean_operator(ops)
     rng = np.random.default_rng(4)
     X = rng.standard_normal((mean_op.shape[0], 4))
-    implicit = mean_op.apply_transpose_to_features(X)
+    implicit = mean_op.apply_transpose_to_features(X, normalize=False)
     dense_mean = np.mean([op.materialize_dense() for op in ops], axis=0)
     expected = dense_mean.T @ X
     np.testing.assert_allclose(implicit, expected, atol=1e-10, rtol=1e-10)

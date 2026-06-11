@@ -44,7 +44,7 @@ def test_weighted_mean_operator_apply_matches_weighted_dense_average():
     mop = make_weighted_mean_operator(ops, w)
     rng = np.random.default_rng(99)
     F = rng.standard_normal((mop.shape[1], 5))
-    implicit = mop.apply_to_features(F)
+    implicit = mop.apply_to_features(F, normalize=False)
     dense_mean = sum(wk * op.materialize_dense() for wk, op in zip(w / w.sum(), ops))
     expected = dense_mean @ F
     np.testing.assert_allclose(implicit, expected, atol=1e-10, rtol=1e-10)
@@ -56,7 +56,7 @@ def test_weighted_mean_operator_apply_transpose_matches_weighted_dense_average()
     mop = make_weighted_mean_operator(ops, w)
     rng = np.random.default_rng(4)
     X = rng.standard_normal((mop.shape[0], 3))
-    implicit = mop.apply_transpose_to_features(X)
+    implicit = mop.apply_transpose_to_features(X, normalize=False)
     wn = w / w.sum()
     dense_mean = sum(wk * op.materialize_dense() for wk, op in zip(wn, ops))
     expected = dense_mean.T @ X

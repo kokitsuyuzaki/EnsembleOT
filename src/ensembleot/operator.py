@@ -74,26 +74,8 @@ class ImplicitTransportOperator:
     def shape(self) -> tuple[int, int]:
         return (self.n_x, self.n_y)
 
-    def apply_to_features(self, Y: np.ndarray) -> np.ndarray:
-        """Compute T @ Y without forming the full n_x × n_y matrix.
-
-        Derivation. With T[i,j] = T_cluster[a,b] / (m_x[a] m_y[b]),
-
-            (T Y)[i, :] = Σ_j T[i,j] Y[j,:]
-                        = (1/m_x[a]) Σ_b T_cluster[a,b] (1/m_y[b]) Σ_{j∈D_b} Y[j,:]
-                        = (1/m_x[a]) [T_cluster @ Ȳ]_{a,:}
-
-        where Ȳ[b,:] = (1/m_y[b]) Σ_{j∈D_b} Y[j,:]. So:
-
-          1. aggregate Y by target-cluster (sum → divide by m_y)
-          2. multiply by T_cluster
-          3. broadcast to samples via labels_x and divide by m_x
-        """
-        Y = np.asarray(Y)
-        squeeze = False
-        if Y.ndim == 1:
-            Y = Y[:, None]
-            squeeze = True
+    def _apply_raw(self, Y: np.ndarray) -> np.ndarray:
+        """Raw operator action ``T @ Y`` (2-D in, 2-D out). No normalization."""
         K_x, K_y = self.T_cluster.shape
         Y_sum = aggregate_by_label(Y, self.labels_y, K_y, reduce="sum")      # (K_y, F)
         my = self.cluster_mass_y.astype(Y_sum.dtype)
@@ -103,16 +85,10 @@ class ImplicitTransportOperator:
         sample_out = broadcast_to_samples(cluster_out, self.labels_x)         # (n_x, F)
         mx = self.cluster_mass_x.astype(sample_out.dtype)
         mx_safe = np.where(mx > 0, mx, 1.0)
-        out = sample_out / mx_safe[self.labels_x][:, None]
-        return out[:, 0] if squeeze else out
+        return sample_out / mx_safe[self.labels_x][:, None]
 
-    def apply_transpose_to_features(self, X: np.ndarray) -> np.ndarray:
-        """Compute T.T @ X without forming the full matrix. Symmetric to apply_to_features."""
-        X = np.asarray(X)
-        squeeze = False
-        if X.ndim == 1:
-            X = X[:, None]
-            squeeze = True
+    def _apply_transpose_raw(self, X: np.ndarray) -> np.ndarray:
+        """Raw transpose action ``T.T @ X`` (2-D in, 2-D out). No normalization."""
         K_x, K_y = self.T_cluster.shape
         X_sum = aggregate_by_label(X, self.labels_x, K_x, reduce="sum")       # (K_x, F)
         mx = self.cluster_mass_x.astype(X_sum.dtype)
@@ -122,7 +98,56 @@ class ImplicitTransportOperator:
         sample_out = broadcast_to_samples(cluster_out, self.labels_y)         # (n_y, F)
         my = self.cluster_mass_y.astype(sample_out.dtype)
         my_safe = np.where(my > 0, my, 1.0)
-        out = sample_out / my_safe[self.labels_y][:, None]
+        return sample_out / my_safe[self.labels_y][:, None]
+
+    def apply_to_features(self, Y: np.ndarray, normalize: bool = True) -> np.ndarray:
+        """Transport target features to the source side.
+
+        With ``T[i,j] = T_cluster[a,b] / (m_x[a] m_y[b])``,
+
+            (T Y)[i, :] = Σ_j T[i,j] Y[j,:]
+                        = (1/m_x[a]) [T_cluster @ Ȳ]_{a,:}
+
+        where Ȳ[b,:] = (1/m_y[b]) Σ_{j∈D_b} Y[j,:].
+
+        ``normalize`` (default ``True``) divides each source row by its
+        transport mass Σ_j T[i,j], so the result is a proper *weighted
+        average* of the target features (the barycentric projection,
+        i.e. the conditional mean E[Y | x_i]) on the same scale as ``Y``.
+        Without it, rows of ``T`` sum to ``1/n_x`` and the output is
+        crushed toward 0 by that factor — set ``normalize=False`` only
+        when you need the raw linear operator action ``T @ Y``.
+        """
+        Y = np.asarray(Y)
+        squeeze = False
+        if Y.ndim == 1:
+            Y = Y[:, None]
+            squeeze = True
+        out = self._apply_raw(Y)
+        if normalize:
+            denom = self._apply_raw(np.ones((self.n_y, 1), dtype=out.dtype))   # (n_x, 1)
+            denom = np.where(np.abs(denom) > 1e-30, denom, 1.0)
+            out = out / denom
+        return out[:, 0] if squeeze else out
+
+    def apply_transpose_to_features(self, X: np.ndarray, normalize: bool = True) -> np.ndarray:
+        """Transport source features to the target side (``T.T @ X``).
+
+        Symmetric to :meth:`apply_to_features`. ``normalize`` (default
+        ``True``) divides each target row by Σ_i T[i,j] so the result is
+        a weighted average of the source features on the same scale as
+        ``X``. ``normalize=False`` returns the raw ``T.T @ X``.
+        """
+        X = np.asarray(X)
+        squeeze = False
+        if X.ndim == 1:
+            X = X[:, None]
+            squeeze = True
+        out = self._apply_transpose_raw(X)
+        if normalize:
+            denom = self._apply_transpose_raw(np.ones((self.n_x, 1), dtype=out.dtype))  # (n_y, 1)
+            denom = np.where(np.abs(denom) > 1e-30, denom, 1.0)
+            out = out / denom
         return out[:, 0] if squeeze else out
 
     def materialize_entry(self, i: int, j: int) -> float:
