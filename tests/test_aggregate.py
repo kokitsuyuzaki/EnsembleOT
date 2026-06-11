@@ -39,6 +39,20 @@ def _suite(n_ops=4, seed=0):
     return [_random_operator(rng) for _ in range(n_ops)]
 
 
+def test_mean_operator_stochastic_mode_copies_and_reproduces():
+    ops = [_random_operator(np.random.default_rng(s), n_x=400, n_y=300)
+           for s in range(4)]
+    mean_op = make_mean_operator(ops)
+    Y = np.random.default_rng(9).standard_normal((mean_op.shape[1], 2))
+    a = mean_op.apply_to_features(Y, mode="stochastic", random_state=0)
+    b = mean_op.apply_to_features(Y, mode="stochastic", random_state=0)
+    assert a.shape == (mean_op.shape[0], 2)
+    np.testing.assert_array_equal(a, b)               # reproducible
+    in_rows = {tuple(r) for r in Y}
+    for r in a:                                        # copies, not blends
+        assert tuple(r) in in_rows
+
+
 # --------- MeanTransportOperator ---------
 
 def test_mean_operator_apply_matches_dense_average():

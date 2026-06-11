@@ -114,6 +114,61 @@ def test_1d_feature_input_is_supported():
     np.testing.assert_allclose(out, op.materialize_dense() @ y, atol=1e-10)
 
 
+def test_stochastic_mode_copies_target_values():
+    """Stochastic lifting returns actual F_y rows, never averages."""
+    rng = np.random.default_rng(0)
+    op = _random_operator(rng, n_x=200, n_y=120, K_x=5, K_y=4)
+    Y = rng.standard_normal((op.n_y, 3))
+    out = op.apply_to_features(Y, mode="stochastic", random_state=1)
+    assert out.shape == (op.n_x, 3)
+    # every output row must equal some input row (a copy, not a blend)
+    in_rows = {tuple(r) for r in Y}
+    for r in out:
+        assert tuple(r) in in_rows
+
+
+def test_stochastic_mode_is_reproducible_and_seed_sensitive():
+    rng = np.random.default_rng(0)
+    op = _random_operator(rng, n_x=300, n_y=150, K_x=6, K_y=5)
+    Y = rng.standard_normal((op.n_y, 2))
+    a = op.apply_to_features(Y, mode="stochastic", random_state=42)
+    b = op.apply_to_features(Y, mode="stochastic", random_state=42)
+    c = op.apply_to_features(Y, mode="stochastic", random_state=7)
+    np.testing.assert_array_equal(a, b)
+    assert not np.array_equal(a, c)
+
+
+def test_stochastic_mode_preserves_spread_better_than_barycentric():
+    """On within-cluster-heavy features, stochastic keeps more variance."""
+    rng = np.random.default_rng(3)
+    op = _random_operator(rng, n_x=2000, n_y=2000, K_x=10, K_y=10)
+    # feature with strong within-cluster (label-orthogonal) variance
+    Y = rng.standard_normal(op.n_y)
+    bary = op.apply_to_features(Y, mode="barycentric")
+    stoch = op.apply_to_features(Y, mode="stochastic", random_state=0)
+    assert stoch.std() > bary.std()
+    # stochastic stays on the original feature scale
+    assert 0.7 * Y.std() < stoch.std() < 1.3 * Y.std()
+
+
+def test_stochastic_transpose_runs_and_copies():
+    rng = np.random.default_rng(1)
+    op = _random_operator(rng, n_x=120, n_y=90, K_x=4, K_y=3)
+    X = rng.standard_normal((op.n_x, 2))
+    out = op.apply_transpose_to_features(X, mode="stochastic", random_state=5)
+    assert out.shape == (op.n_y, 2)
+    in_rows = {tuple(r) for r in X}
+    for r in out:
+        assert tuple(r) in in_rows
+
+
+def test_invalid_mode_raises():
+    rng = np.random.default_rng(0)
+    op = _random_operator(rng, n_x=10, n_y=8, K_x=3, K_y=2)
+    with pytest.raises(ValueError):
+        op.apply_to_features(np.ones(op.n_y), mode="nope")
+
+
 def test_materialize_entry_matches_formula():
     labels_x = np.array([0, 0, 1, 1, 2])
     labels_y = np.array([0, 1, 1])

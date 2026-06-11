@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ensembleot"
-version = "0.1.0"
+version = "0.2.0"
 description = "Ensemble Optimal Transport via randomized clustering with implicit sample-level lifting."
 readme = "README.md"
 requires-python = ">=3.11"

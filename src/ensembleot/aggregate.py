@@ -24,6 +24,39 @@ import numpy as np
 from .operator import ImplicitTransportOperator
 
 
+def _stochastic_mixture(
+    operators: Sequence[ImplicitTransportOperator],
+    weights: np.ndarray,
+    F: np.ndarray,
+    axis: str,
+    random_state: int | None,
+) -> np.ndarray:
+    """Stochastic lifting for an averaged plan = mixture over runs.
+
+    The aggregated plan is Σ_k w_k T_k. Because every run's rows carry equal
+    transport mass per sample, sampling from that mixture is: pick a run
+    ``k`` with probability ``w_k`` for each output sample, then draw from
+    that run's stochastic lift. No dense matrix is built.
+    """
+    F = np.asarray(F)
+    squeeze = F.ndim == 1
+    F2d = F[:, None] if squeeze else F
+    rng = np.random.default_rng(random_state)
+    n_out = operators[0].shape[0 if axis == "forward" else 1]
+    n_feat = F2d.shape[1]
+    run_idx = rng.choice(len(operators), size=n_out, p=weights)
+    out = np.empty((n_out, n_feat), dtype=float)
+    for k, op in enumerate(operators):
+        sel = np.flatnonzero(run_idx == k)
+        if sel.size == 0:
+            continue
+        if axis == "forward":
+            out[sel] = op._stochastic_subset(F2d, rng, sel)
+        else:
+            out[sel] = op._stochastic_transpose_subset(F2d, rng, sel)
+    return out[:, 0] if squeeze else out
+
+
 @dataclass(frozen=True)
 class ConsensusEdge:
     i: int
@@ -60,7 +93,18 @@ class MeanTransportOperator:
     def shape(self) -> tuple[int, int]:
         return self.operators[0].shape
 
-    def apply_to_features(self, Y: np.ndarray, normalize: bool = True) -> np.ndarray:
+    def apply_to_features(
+        self,
+        Y: np.ndarray,
+        normalize: bool = True,
+        mode: str = "barycentric",
+        random_state: int | None = None,
+    ) -> np.ndarray:
+        w = np.full(self.n_runs, 1.0 / self.n_runs)
+        if mode == "stochastic":
+            return _stochastic_mixture(
+                self.operators, w, Y, axis="forward", random_state=random_state
+            )
         acc = self.operators[0].apply_to_features(Y, normalize=False)
         for op in self.operators[1:]:
             acc = acc + op.apply_to_features(Y, normalize=False)
@@ -73,7 +117,18 @@ class MeanTransportOperator:
         denom = np.where(np.abs(denom) > 1e-30, denom, 1.0)
         return acc / (denom[:, None] if acc.ndim == 2 else denom)
 
-    def apply_transpose_to_features(self, X: np.ndarray, normalize: bool = True) -> np.ndarray:
+    def apply_transpose_to_features(
+        self,
+        X: np.ndarray,
+        normalize: bool = True,
+        mode: str = "barycentric",
+        random_state: int | None = None,
+    ) -> np.ndarray:
+        w = np.full(self.n_runs, 1.0 / self.n_runs)
+        if mode == "stochastic":
+            return _stochastic_mixture(
+                self.operators, w, X, axis="transpose", random_state=random_state
+            )
         acc = self.operators[0].apply_transpose_to_features(X, normalize=False)
         for op in self.operators[1:]:
             acc = acc + op.apply_transpose_to_features(X, normalize=False)
@@ -153,8 +208,18 @@ class WeightedMeanTransportOperator:
     def shape(self) -> tuple[int, int]:
         return self.operators[0].shape
 
-    def apply_to_features(self, Y: np.ndarray, normalize: bool = True) -> np.ndarray:
+    def apply_to_features(
+        self,
+        Y: np.ndarray,
+        normalize: bool = True,
+        mode: str = "barycentric",
+        random_state: int | None = None,
+    ) -> np.ndarray:
         w = self.weights
+        if mode == "stochastic":
+            return _stochastic_mixture(
+                self.operators, w, Y, axis="forward", random_state=random_state
+            )
         acc = w[0] * self.operators[0].apply_to_features(Y, normalize=False)
         for k in range(1, len(self.operators)):
             acc = acc + w[k] * self.operators[k].apply_to_features(Y, normalize=False)
@@ -167,8 +232,18 @@ class WeightedMeanTransportOperator:
         denom = np.where(np.abs(denom) > 1e-30, denom, 1.0)
         return acc / (denom[:, None] if acc.ndim == 2 else denom)
 
-    def apply_transpose_to_features(self, X: np.ndarray, normalize: bool = True) -> np.ndarray:
+    def apply_transpose_to_features(
+        self,
+        X: np.ndarray,
+        normalize: bool = True,
+        mode: str = "barycentric",
+        random_state: int | None = None,
+    ) -> np.ndarray:
         w = self.weights
+        if mode == "stochastic":
+            return _stochastic_mixture(
+                self.operators, w, X, axis="transpose", random_state=random_state
+            )
         acc = w[0] * self.operators[0].apply_transpose_to_features(X, normalize=False)
         for k in range(1, len(self.operators)):
             acc = acc + w[k] * self.operators[k].apply_transpose_to_features(X, normalize=False)

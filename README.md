@@ -138,3 +138,30 @@ submatrix だけを確保し、`(R, n_x, n_y)` の stack や `(n_x, n_y)` の全
   搬送先クラスタ内の分散はクラスタ平均化で失われるため、より鋭い裾が
   必要なときは `reg` を下げる / `solver_method="emd"` / クラスタ数を
   増やすといったチューニングを併用してください。
+
+### 搬送モード (`mode`, v0.2.0〜)
+
+`apply_to_features` / `apply_transpose_to_features` は `mode` 引数で
+2 通りの搬送を切り替えられます。
+
+- `mode="barycentric"` (既定) — 決定的。上記の (正規化済み) 加重平均
+  = 条件付き平均 E[F_y | x_i] を返す。滑らかだが、搬送先クラスタ内の
+  分散が平均で消えるため**裾が潰れる**。
+- `mode="stochastic"` — 確率的。各搬送元について対応づけ重み
+  `T_cluster[a,·]` に比例して搬送先クラスタを 1 つ抽選し、その**実サンプル
+  の特徴量をそのままコピー**する。平均しないので **F_y の分布形状・裾を
+  保持**する。`random_state` で再現可能。`normalize` は無視される。
+
+```python
+F_smooth = mean_op.apply_to_features(F_y)                              # barycentric (既定)
+F_keep_tails = mean_op.apply_to_features(                              # 分布形状を保つ
+    F_y, mode="stochastic", random_state=0
+)
+```
+
+`mode` は `ImplicitTransportOperator` の機能なので、`run_ensemble_sinkhorn`
+だけでなく **`run_ensemble_gw` / `run_ensemble_fgw` で得た operator でも
+同様に使えます**。`MeanTransportOperator` /
+`WeightedMeanTransportOperator` では、搬送元ごとに run を weight に比例
+して抽選してからその run の確率的搬送を引く混合サンプリングになります
+(`(R, n_x, n_y)` スタックや dense T は作りません)。
