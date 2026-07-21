@@ -21,7 +21,7 @@ from typing import Sequence
 
 import numpy as np
 
-from .operator import ImplicitTransportOperator
+from .operator import ImplicitTransportOperator, _quantile_match
 
 
 def _stochastic_mixture(
@@ -105,6 +105,12 @@ class MeanTransportOperator:
             return _stochastic_mixture(
                 self.operators, w, Y, axis="forward", random_state=random_state
             )
+        if mode == "matched":
+            bary = self.apply_to_features(Y, normalize=True, mode="barycentric")
+            Y2 = np.asarray(Y)
+            if Y2.ndim == 1:
+                return _quantile_match(bary[:, None], Y2[:, None])[:, 0]
+            return _quantile_match(bary, Y2)
         acc = self.operators[0].apply_to_features(Y, normalize=False)
         for op in self.operators[1:]:
             acc = acc + op.apply_to_features(Y, normalize=False)
@@ -129,6 +135,12 @@ class MeanTransportOperator:
             return _stochastic_mixture(
                 self.operators, w, X, axis="transpose", random_state=random_state
             )
+        if mode == "matched":
+            bary = self.apply_transpose_to_features(X, normalize=True, mode="barycentric")
+            X2 = np.asarray(X)
+            if X2.ndim == 1:
+                return _quantile_match(bary[:, None], X2[:, None])[:, 0]
+            return _quantile_match(bary, X2)
         acc = self.operators[0].apply_transpose_to_features(X, normalize=False)
         for op in self.operators[1:]:
             acc = acc + op.apply_transpose_to_features(X, normalize=False)
@@ -220,6 +232,12 @@ class WeightedMeanTransportOperator:
             return _stochastic_mixture(
                 self.operators, w, Y, axis="forward", random_state=random_state
             )
+        if mode == "matched":
+            bary = self.apply_to_features(Y, normalize=True, mode="barycentric")
+            Y2 = np.asarray(Y)
+            if Y2.ndim == 1:
+                return _quantile_match(bary[:, None], Y2[:, None])[:, 0]
+            return _quantile_match(bary, Y2)
         acc = w[0] * self.operators[0].apply_to_features(Y, normalize=False)
         for k in range(1, len(self.operators)):
             acc = acc + w[k] * self.operators[k].apply_to_features(Y, normalize=False)
@@ -244,6 +262,12 @@ class WeightedMeanTransportOperator:
             return _stochastic_mixture(
                 self.operators, w, X, axis="transpose", random_state=random_state
             )
+        if mode == "matched":
+            bary = self.apply_transpose_to_features(X, normalize=True, mode="barycentric")
+            X2 = np.asarray(X)
+            if X2.ndim == 1:
+                return _quantile_match(bary[:, None], X2[:, None])[:, 0]
+            return _quantile_match(bary, X2)
         acc = w[0] * self.operators[0].apply_transpose_to_features(X, normalize=False)
         for k in range(1, len(self.operators)):
             acc = acc + w[k] * self.operators[k].apply_transpose_to_features(X, normalize=False)

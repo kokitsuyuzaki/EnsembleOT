@@ -162,6 +162,48 @@ def test_stochastic_transpose_runs_and_copies():
         assert tuple(r) in in_rows
 
 
+def test_matched_mode_matches_target_distribution_and_keeps_ranking():
+    """matched keeps barycentric ranking but restores Y's distribution."""
+    rng = np.random.default_rng(4)
+    op = _random_operator(rng, n_x=2000, n_y=2000, K_x=10, K_y=10)
+    Y = rng.standard_normal(op.n_y)
+    bary = op.apply_to_features(Y, mode="barycentric")
+    matched = op.apply_to_features(Y, mode="matched")
+    from scipy.stats import spearmanr, ks_2samp
+    # 1) matched is a weakly-monotone (rank-preserving) map of barycentric:
+    #    sorted by bary, matched never decreases -> Spearman-type scores are
+    #    preserved (exactly, up to ties which the remap breaks by position).
+    order = np.argsort(bary, kind="stable")
+    assert np.all(np.diff(matched[order]) >= -1e-9)
+    assert spearmanr(bary, matched).correlation > 0.98
+    # 2) marginal distribution equals Y's (up to the discrete rank remap)
+    assert ks_2samp(matched, Y).statistic < 0.02
+    # 3) barycentric collapses the spread; matched restores it
+    assert bary.std() < Y.std()
+    assert matched.std() == pytest.approx(Y.std(), rel=0.05)
+
+
+def test_matched_mode_is_deterministic_and_2d():
+    rng = np.random.default_rng(1)
+    op = _random_operator(rng, n_x=300, n_y=200, K_x=5, K_y=4)
+    Y = rng.standard_normal((op.n_y, 3))
+    a = op.apply_to_features(Y, mode="matched")
+    b = op.apply_to_features(Y, mode="matched")
+    assert a.shape == (op.n_x, 3)
+    np.testing.assert_array_equal(a, b)                       # deterministic
+    # each output column uses only values drawn from the matching Y column
+    for k in range(3):
+        assert set(np.unique(a[:, k])).issubset(set(np.unique(Y[:, k])))
+
+
+def test_matched_transpose_runs():
+    rng = np.random.default_rng(2)
+    op = _random_operator(rng, n_x=200, n_y=150, K_x=4, K_y=3)
+    X = rng.standard_normal((op.n_x, 2))
+    out = op.apply_transpose_to_features(X, mode="matched")
+    assert out.shape == (op.n_y, 2)
+
+
 def test_invalid_mode_raises():
     rng = np.random.default_rng(0)
     op = _random_operator(rng, n_x=10, n_y=8, K_x=3, K_y=2)

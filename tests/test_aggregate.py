@@ -53,6 +53,24 @@ def test_mean_operator_stochastic_mode_copies_and_reproduces():
         assert tuple(r) in in_rows
 
 
+def test_mean_operator_matched_mode_keeps_ranking_and_distribution():
+    from scipy.stats import spearmanr, ks_2samp
+    ops = [_random_operator(np.random.default_rng(s), n_x=1500, n_y=1500)
+           for s in range(4)]
+    mean_op = make_mean_operator(ops)
+    Y = np.random.default_rng(9).standard_normal(mean_op.shape[1])
+    bary = mean_op.apply_to_features(Y, mode="barycentric")
+    matched = mean_op.apply_to_features(Y, mode="matched")
+    assert matched.shape == (mean_op.shape[0],)
+    order = np.argsort(bary, kind="stable")               # weakly monotone in bary
+    assert np.all(np.diff(matched[order]) >= -1e-9)
+    assert spearmanr(bary, matched).correlation > 0.98
+    assert ks_2samp(matched, Y).statistic < 0.05
+    np.testing.assert_array_equal(                       # deterministic
+        matched, mean_op.apply_to_features(Y, mode="matched")
+    )
+
+
 # --------- MeanTransportOperator ---------
 
 def test_mean_operator_apply_matches_dense_average():

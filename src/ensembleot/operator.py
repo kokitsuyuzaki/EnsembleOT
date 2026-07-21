@@ -92,6 +92,31 @@ def _stochastic_sample(
     return out
 
 
+def _quantile_match(values: np.ndarray, reference: np.ndarray) -> np.ndarray:
+    """Monotone (rank-preserving) remap of ``values`` onto the empirical
+    distribution of ``reference``, column by column.
+
+    Each output value is replaced by the ``reference`` value at the same
+    rank position, so the result has ``reference``'s marginal distribution
+    while keeping the rank order of ``values`` (ties broken by position).
+    Both inputs are (n, F); the remap is independent per feature column.
+    Used by ``mode="matched"`` to restore the target feature distribution
+    that the barycentric mean collapses, without changing spatial ranking.
+    """
+    n = values.shape[0]
+    if n == 0:
+        return values.astype(float)
+    out = np.empty_like(values, dtype=float)
+    span = max(n - 1, 1)
+    for k in range(values.shape[1]):
+        ranks = np.argsort(np.argsort(values[:, k], kind="stable"), kind="stable")
+        ref_sorted = np.sort(reference[:, k])
+        m = ref_sorted.shape[0]
+        idx = np.floor(ranks / span * (m - 1)).astype(int) if m > 1 else np.zeros(n, dtype=int)
+        out[:, k] = ref_sorted[idx]
+    return out
+
+
 @dataclass
 class ImplicitTransportOperator:
     labels_x: np.ndarray          # (n_x,) int
@@ -198,6 +223,13 @@ class ImplicitTransportOperator:
           preserves the within-cluster spread / tails of ``Y`` that the
           barycentric mean averages away. ``random_state`` seeds the draw;
           ``normalize`` is ignored.
+
+        * ``"matched"`` — deterministic. Compute the barycentric output,
+          then remap each feature column onto the empirical distribution of
+          the corresponding ``Y`` column (rank-preserving quantile match).
+          This keeps the barycentric spatial ranking (so any Spearman-type
+          score is unchanged) while restoring the feature distribution the
+          mean collapses. ``normalize`` / ``random_state`` are ignored.
         """
         Y = np.asarray(Y)
         squeeze = False
@@ -213,8 +245,14 @@ class ImplicitTransportOperator:
         elif mode == "stochastic":
             rng = np.random.default_rng(random_state)
             out = self._stochastic_subset(Y, rng, np.arange(self.n_x))
+        elif mode == "matched":
+            out = self.apply_to_features(Y, normalize=True, mode="barycentric")
+            out = out[:, None] if out.ndim == 1 else out
+            out = _quantile_match(out, Y)
         else:
-            raise ValueError(f"unknown mode {mode!r} (use 'barycentric' or 'stochastic')")
+            raise ValueError(
+                f"unknown mode {mode!r} (use 'barycentric', 'stochastic' or 'matched')"
+            )
         return out[:, 0] if squeeze else out
 
     def apply_transpose_to_features(
@@ -230,7 +268,10 @@ class ImplicitTransportOperator:
         (default) returns the (optionally row-normalized) ``T.T @ X``;
         ``mode="stochastic"`` draws, per target sample, a source cluster
         ∝ ``T_cluster[·,b]`` and copies a random member's feature row,
-        preserving the within-cluster spread of ``X``.
+        preserving the within-cluster spread of ``X``; ``mode="matched"``
+        remaps the barycentric output onto each ``X`` column's empirical
+        distribution (rank-preserving), restoring the feature distribution
+        while keeping the spatial ranking.
         """
         X = np.asarray(X)
         squeeze = False
@@ -246,8 +287,14 @@ class ImplicitTransportOperator:
         elif mode == "stochastic":
             rng = np.random.default_rng(random_state)
             out = self._stochastic_transpose_subset(X, rng, np.arange(self.n_y))
+        elif mode == "matched":
+            out = self.apply_transpose_to_features(X, normalize=True, mode="barycentric")
+            out = out[:, None] if out.ndim == 1 else out
+            out = _quantile_match(out, X)
         else:
-            raise ValueError(f"unknown mode {mode!r} (use 'barycentric' or 'stochastic')")
+            raise ValueError(
+                f"unknown mode {mode!r} (use 'barycentric', 'stochastic' or 'matched')"
+            )
         return out[:, 0] if squeeze else out
 
     def materialize_entry(self, i: int, j: int) -> float:
