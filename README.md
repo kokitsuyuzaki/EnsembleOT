@@ -1,30 +1,66 @@
 # EnsembleOT
 
+[![DOI](https://zenodo.org/badge/1210430822.svg)](https://zenodo.org/badge/latestdoi/1210430822)
+[![DockerHub/GHCR](https://github.com/kokitsuyuzaki/EnsembleOT/actions/workflows/build_test_push.yml/badge.svg)](https://github.com/kokitsuyuzaki/EnsembleOT/actions/workflows/build_test_push.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 Ensemble Optimal Transport via randomized clustering, with implicit
 sample-level lifting. Backend: [POT](https://pythonot.github.io/).
 
-## 公開 API の方針
+## Installation
 
-- **Sinkhorn 系と Gromov–Wasserstein 系は別のエントリポイント**として提供します。
-  1 つの関数に両者を統合しません。
-  - `run_ensemble_sinkhorn(...)` — entropic / EMD 系 (feature cost のみ)
-  - `run_ensemble_gw(...)` — Gromov–Wasserstein 系 (structure cost のみ)
-  - `run_ensemble_fgw(...)` — Fused Gromov–Wasserstein 系 (feature + structure を同時に使う)
-    - Stage 12a (デフォルト挙動): **X, Y が同じ feature 次元を持つ場合のみ**。
-      `M = ot.dist(centers_x, centers_y, metric=...)` を内部で自動生成します。
-    - Stage 12b 拡張: `cross_feature_cost_fn=...` を渡せば、各 run の
-      cluster-level cross-domain cost `M` (shape `(K_x, K_y)`) を外部から
-      供給できます。これにより `X.shape[1] != Y.shape[1]` の **cross-modal
-      FGW** が可能になります。callable は `centers_x`, `centers_y`,
-      `labels_x`, `labels_y`, `seed`, `metric` 等を受け取り、追加引数は
-      `cross_feature_cost_kwargs` で渡します。
-    - `alpha` の意味は引き続き POT の FGW 実装 (`ot.gromov.fused_gromov_wasserstein`
-      / `ot.gromov.entropic_fused_gromov_wasserstein`) にそのまま準拠します。
-      EnsembleOT 側で再定義はしません。
-- Sinkhorn / GW / FGW の 3 エントリポイント、複数試行の集約 (aggregation)、
-  metrics、weighted aggregation、結果の永続化 (storage) はいずれも実装済みです。
+```bash
+pip install git+https://github.com/kokitsuyuzaki/EnsembleOT.git
+```
 
-## End-to-end 使用例 (Sinkhorn + metric-weighted aggregation)
+For development (Python >= 3.11):
+
+```bash
+git clone https://github.com/kokitsuyuzaki/EnsembleOT.git
+cd EnsembleOT
+pip install -e ".[dev]"
+pytest
+```
+
+### Docker
+
+Pre-built images are published to Docker Hub and the GitHub Container
+Registry on every push to `main`:
+
+```bash
+docker pull koki/ensembleot:latest
+# or
+docker pull ghcr.io/kokitsuyuzaki/ensembleot:latest
+
+docker run --rm -it koki/ensembleot:latest python -c "import ensembleot; print(ensembleot.__all__)"
+```
+
+## Public API policy
+
+- **The Sinkhorn family and the Gromov–Wasserstein family are exposed as
+  separate entry points.** They are never merged into a single function.
+  - `run_ensemble_sinkhorn(...)` — entropic / EMD family (feature cost only)
+  - `run_ensemble_gw(...)` — Gromov–Wasserstein family (structure cost only)
+  - `run_ensemble_fgw(...)` — Fused Gromov–Wasserstein family (uses feature
+    and structure costs jointly)
+    - Stage 12a (default behavior): **only when X and Y share the same
+      feature dimension**. `M = ot.dist(centers_x, centers_y, metric=...)`
+      is generated internally.
+    - Stage 12b extension: by passing `cross_feature_cost_fn=...`, the
+      cluster-level cross-domain cost `M` (shape `(K_x, K_y)`) of each run
+      can be supplied externally. This enables **cross-modal FGW** with
+      `X.shape[1] != Y.shape[1]`. The callable receives `centers_x`,
+      `centers_y`, `labels_x`, `labels_y`, `seed`, `metric`, etc.; extra
+      arguments are passed through `cross_feature_cost_kwargs`.
+    - The meaning of `alpha` follows POT's FGW implementation
+      (`ot.gromov.fused_gromov_wasserstein` /
+      `ot.gromov.entropic_fused_gromov_wasserstein`) as is. EnsembleOT does
+      not redefine it.
+- The three entry points (Sinkhorn / GW / FGW), aggregation over multiple
+  runs, metrics, weighted aggregation, and result persistence (storage) are
+  all implemented.
+
+## End-to-end example (Sinkhorn + metric-weighted aggregation)
 
 ```python
 import numpy as np
@@ -38,7 +74,7 @@ rng = np.random.default_rng(0)
 X = rng.standard_normal((200, 10))
 Y = rng.standard_normal((180, 10)) + 0.3
 
-# 1. 複数 run の cluster-level OT を解く
+# 1. Solve cluster-level OT for multiple runs
 runs = run_ensemble_sinkhorn(
     X, Y,
     n_clusters_x=15, n_clusters_y=12,
@@ -48,18 +84,18 @@ runs = run_ensemble_sinkhorn(
     random_state=42,
 )
 
-# 2. marginal 誤差が小さい run ほど重視した weighted mean operator
+# 2. Weighted mean operator that favors runs with smaller marginal error
 mean_op = make_metric_weighted_mean_operator(
     runs,
     policy="inverse",
     key="metrics.marginal_error_row",
 )
 
-# 3. Y 側の特徴量を X 側へ搬送 (full T を作らない)
+# 3. Transport Y-side features to the X side (without building the full T)
 F_y = rng.standard_normal((Y.shape[0], 4))
-F_x = mean_op.apply_to_features(F_y)      # shape (200, 4); 既定で行正規化 (barycentric)
+F_x = mean_op.apply_to_features(F_y)      # shape (200, 4); row-normalized (barycentric) by default
 
-# 4. 全 run で一貫して強い edge のみ抽出
+# 4. Extract only the edges that are consistently strong across all runs
 edges = metric_weighted_consensus_edges(
     runs,
     threshold=1e-4,
@@ -71,110 +107,133 @@ edges = metric_weighted_consensus_edges(
 )
 ```
 
-GW 版を使う場合は `run_ensemble_sinkhorn` を `run_ensemble_gw` に差し替えるだけで、
-以降の aggregation パイプラインはそのまま使えます。
+To use the GW variant, simply replace `run_ensemble_sinkhorn` with
+`run_ensemble_gw`; the downstream aggregation pipeline works unchanged.
 
 ## Clustering backends
 
-- `"kmeans"` (デフォルト) — scikit-learn の k-means。反復最適化あり。
-- `"random_voronoi"` — X からランダムに seed 点を選び、各サンプルを最寄り
-  seed に割り当てる Voronoi 型の空間分割。反復更新を行わないため高速で、
-  毎 run で異なる粗い空間区切りを作る用途に向きます。
-  `run_ensemble_sinkhorn` / `run_ensemble_gw` / `run_ensemble_fgw` のいずれ
-  でも `clustering_method="random_voronoi"` で利用できます。
+- `"kmeans"` (default) — scikit-learn's k-means, with iterative optimization.
+- `"random_voronoi"` — a Voronoi-style spatial partition that picks seed
+  points at random from X and assigns each sample to its nearest seed. It
+  performs no iterative updates, so it is fast and well suited to producing a
+  different coarse spatial partition in every run. It is available via
+  `clustering_method="random_voronoi"` in any of `run_ensemble_sinkhorn` /
+  `run_ensemble_gw` / `run_ensemble_fgw`.
 
 ## Run weights from metrics
 
-- 各 run の `op.meta["metrics"]` から、`compute_run_weights(operators, policy=..., key=...)`
-  で weighted aggregation 用の run-weight ベクトル (非負・総和 1) を生成できます。
-- 得られた weights はそのまま `make_weighted_mean_operator` /
-  `weighted_consensus_edges` に渡せます。
-- 対応 policy: `"uniform"`, `"inverse"`, `"softmax_negative"`,
-  `"softmax_positive"`, `"rank_inverse"`。
-- `key` は `"metrics.marginal_error_row"` のようなドット区切りで
-  `op.meta` を辿って値を取ります。
+- From each run's `op.meta["metrics"]`,
+  `compute_run_weights(operators, policy=..., key=...)` produces a run-weight
+  vector (non-negative, summing to 1) for weighted aggregation.
+- The resulting weights can be passed directly to
+  `make_weighted_mean_operator` / `weighted_consensus_edges`.
+- Supported policies: `"uniform"`, `"inverse"`, `"softmax_negative"`,
+  `"softmax_positive"`, `"rank_inverse"`.
+- `key` is a dot-separated path such as `"metrics.marginal_error_row"` that
+  is resolved by traversing `op.meta`.
 
-## Consensus edge 抽出のメモリ特性
+## Memory characteristics of consensus edge extraction
 
-`consensus_edges` / `weighted_consensus_edges` は source index を
-`block_size` 単位でストリーム処理します。各ブロックでは `(block_size, n_y)`
-の累積バッファ 2 本 (mean / frequency) と、各 run あたり同サイズの一時
-submatrix だけを確保し、`(R, n_x, n_y)` の stack や `(n_x, n_y)` の全平均
-行列は一切作りません。`block_size=None` のときは `min(n_x, 256)` を使います。
+`consensus_edges` / `weighted_consensus_edges` stream over source indices in
+chunks of `block_size`. Each block allocates only two `(block_size, n_y)`
+accumulation buffers (mean / frequency) plus one temporary submatrix of the
+same size per run; the `(R, n_x, n_y)` stack and the `(n_x, n_y)` full mean
+matrix are never materialized. When `block_size=None`, `min(n_x, 256)` is
+used.
 
-## 永続化 (storage)
+## Persistence (storage)
 
-- EnsembleOT は **sample × sample の dense な transport 行列をディスクに保存しません**。
-- 保存対象は各 run の compact operator 表現 (`labels_x`, `labels_y`,
-  `cluster_mass_x`, `cluster_mass_y`, `T_cluster`, meta) のみで、これを
-  単一の `.npz` にまとめます (`save_operators` / `load_operators`)。
-- `MeanTransportOperator` も構成要素の operators を保存し、ロード時に
-  再構築する方式です (`save_mean_operator` / `load_mean_operator`)。
+- EnsembleOT **never writes a dense sample × sample transport matrix to
+  disk**.
+- Only the compact operator representation of each run (`labels_x`,
+  `labels_y`, `cluster_mass_x`, `cluster_mass_y`, `T_cluster`, meta) is
+  saved, bundled into a single `.npz` (`save_operators` / `load_operators`).
+- `MeanTransportOperator` likewise saves its constituent operators and is
+  rebuilt at load time (`save_mean_operator` / `load_mean_operator`).
 
-## 設計上の不変条件
+## Design invariants
 
-- サンプル × サンプルの巨大な輸送行列 `T` は通常処理で作らない。
-- 各 run の輸送は `ImplicitTransportOperator` で implicit に保持し、
-  `apply_to_features` / `apply_transpose_to_features` で特徴量をクラスタ経由で
-  搬送する。
+- The huge sample × sample transport matrix `T` is not built during normal
+  processing.
+- The transport of each run is held implicitly in an
+  `ImplicitTransportOperator`, and features are transported through the
+  clusters with `apply_to_features` / `apply_transpose_to_features`.
 
-## 特徴量搬送の正規化 (`normalize`, v0.1.0〜)
+## Normalization of feature transport (`normalize`, since v0.1.0)
 
-`apply_to_features(F_y)` / `apply_transpose_to_features(F_x)` は **既定で
-行正規化 (`normalize=True`)** を行い、各搬送先サンプルについて
-「対応づけ重み Σ_j T[i,j] で割った加重平均」= barycentric projection
-(条件付き平均 E[F_y | x_i]) を返します。出力は `F_y` と同じスケールです。
+`apply_to_features(F_y)` / `apply_transpose_to_features(F_x)` perform **row
+normalization by default (`normalize=True`)**: for each destination sample
+they return the weighted average divided by the coupling mass Σ_j T[i,j],
+i.e. the barycentric projection (the conditional mean E[F_y | x_i]). The
+output is on the same scale as `F_y`.
 
-> **v0.0.x からの破壊的変更:** 旧実装は生の線形作用素 `T @ F_y` を返して
-> いました。OT の制約から `T` の各行和は `1/n_x` になるため、出力は元の
-> 特徴量の約 `1/n_x` に縮み、分布のメリハリ (裾) が潰れて見える問題が
-> ありました。v0.1.0 で既定を正規化に変更しています。
+> **Breaking change from v0.0.x:** the old implementation returned the raw
+> linear operator `T @ F_y`. Because the OT constraints make each row of `T`
+> sum to `1/n_x`, the output shrank to roughly `1/n_x` of the original
+> features and the contrast (tails) of the distribution appeared flattened.
+> v0.1.0 changed the default to normalization.
 
-- 生の作用素 `T @ F` (および `T.T @ X`) が必要な場合のみ
-  `normalize=False` を指定してください。`MeanTransportOperator` /
-  `WeightedMeanTransportOperator` も同じ `normalize` 引数を受け取り、
-  集約後の輸送に対して同様に正規化します。
-- なお `normalize` はスケール (=見かけのメリハリ) を直す処理です。
-  搬送先クラスタ内の分散はクラスタ平均化で失われるため、より鋭い裾が
-  必要なときは `reg` を下げる / `solver_method="emd"` / クラスタ数を
-  増やすといったチューニングを併用してください。
+- Specify `normalize=False` only when you need the raw operator `T @ F` (and
+  `T.T @ X`). `MeanTransportOperator` / `WeightedMeanTransportOperator`
+  accept the same `normalize` argument and normalize the aggregated
+  transport in the same way.
+- Note that `normalize` fixes the scale (i.e. the apparent contrast). The
+  variance within a destination cluster is lost by cluster averaging, so
+  when sharper tails are needed, combine it with tuning such as lowering
+  `reg`, using `solver_method="emd"`, or increasing the number of clusters.
 
-### 搬送モード (`mode`, v0.2.0〜 / matched は v0.3.0〜)
+### Transport modes (`mode`, since v0.2.0 / matched since v0.3.0)
 
-`apply_to_features` / `apply_transpose_to_features` は `mode` 引数で
-3 通りの搬送を切り替えられます。
+`apply_to_features` / `apply_transpose_to_features` switch between three
+kinds of transport through the `mode` argument.
 
-- `mode="barycentric"` (既定) — 決定的。上記の (正規化済み) 加重平均
-  = 条件付き平均 E[F_y | x_i] を返す。滑らかだが、搬送先クラスタ内の
-  分散が平均で消えるため**裾が潰れる**。
-- `mode="stochastic"` — 確率的。各搬送元について対応づけ重み
-  `T_cluster[a,·]` に比例して搬送先クラスタを 1 つ抽選し、その**実サンプル
-  の特徴量をそのままコピー**する。平均しないので **F_y の分布形状・裾を
-  保持**する。`random_state` で再現可能。`normalize` は無視される。
-- `mode="matched"` — 決定的。barycentric の出力を、特徴量列ごとに
-  **入力 F_y の経験分布へ順位保存で再マップ (quantile matching)** する。
-  順位は変えないので**空間相関 (Spearman 等) は barycentric と同じ**まま、
-  潰れた分布だけを F_y に一致させられる。`normalize` / `random_state`
-  は無視される。
+- `mode="barycentric"` (default) — deterministic. Returns the (normalized)
+  weighted average described above, i.e. the conditional mean
+  E[F_y | x_i]. It is smooth, but the variance within a destination cluster
+  vanishes in the average, so **the tails are flattened**.
+- `mode="stochastic"` — stochastic. For each source, one destination cluster
+  is drawn with probability proportional to the coupling weights
+  `T_cluster[a,·]`, and the **features of an actual sample are copied as
+  is**. Since nothing is averaged, **the shape and tails of the F_y
+  distribution are preserved**. Reproducible via `random_state`.
+  `normalize` is ignored.
+- `mode="matched"` — deterministic. The barycentric output is **remapped,
+  per feature column and preserving ranks, onto the empirical distribution
+  of the input F_y (quantile matching)**. Because the ranks do not change,
+  **spatial correlation (Spearman, etc.) stays identical to barycentric**
+  while only the flattened distribution is matched to F_y. `normalize` /
+  `random_state` are ignored.
 
 ```python
-F_smooth = mean_op.apply_to_features(F_y)                              # barycentric (既定)
-F_keep_tails = mean_op.apply_to_features(                              # 分布形状を保つ (確率的)
+F_smooth = mean_op.apply_to_features(F_y)                              # barycentric (default)
+F_keep_tails = mean_op.apply_to_features(                              # preserves the distribution shape (stochastic)
     F_y, mode="stochastic", random_state=0
 )
-F_matched = mean_op.apply_to_features(F_y, mode="matched")            # 相関を保ちつつ分布を復元
+F_matched = mean_op.apply_to_features(F_y, mode="matched")            # restores the distribution while keeping correlation
 ```
 
-barycentric は「空間構造は良いが分布が潰れる」、stochastic は「分布は
-保つが各座標独立抽選で空間相関が壊れる」という裏返しの弱点を持つ。
-`matched` はこの 2 つの間を埋める決定的な選択肢で、barycentric の
-ランキングを保ったまま分布を戻す (実 ST→SL データで、smooth と同じ
-空間 Spearman を維持しつつ分布の KS 距離を 0 にできることを確認済み)。
+barycentric and stochastic have mirror-image weaknesses: barycentric gives
+"good spatial structure but a flattened distribution", whereas stochastic
+"preserves the distribution but breaks spatial correlation because each
+coordinate is drawn independently". `matched` is a deterministic option that
+fills the gap between the two, restoring the distribution while keeping the
+barycentric ranking (on real ST→SL data it was confirmed to drive the KS
+distance of the distribution to 0 while keeping the same spatial Spearman
+correlation as the smooth output).
 
-`mode` は `ImplicitTransportOperator` の機能なので、`run_ensemble_sinkhorn`
-だけでなく **`run_ensemble_gw` / `run_ensemble_fgw` で得た operator でも
-同様に使えます**。`MeanTransportOperator` /
-`WeightedMeanTransportOperator` では、stochastic は搬送元ごとに run を
-weight に比例して抽選してその run の確率的搬送を引く混合サンプリング、
-matched は集約後の barycentric 出力を quantile matching します
-(`(R, n_x, n_y)` スタックや dense T は作りません)。
+`mode` is a feature of `ImplicitTransportOperator`, so it works not only
+with `run_ensemble_sinkhorn` but **equally with operators obtained from
+`run_ensemble_gw` / `run_ensemble_fgw`**. For `MeanTransportOperator` /
+`WeightedMeanTransportOperator`, stochastic performs mixture sampling — for
+each source, a run is drawn with probability proportional to its weight and
+that run's stochastic transport is used — and matched applies quantile
+matching to the aggregated barycentric output (neither the `(R, n_x, n_y)`
+stack nor a dense T is built).
+
+## Authors
+
+- Koki Tsuyuzaki
+
+## License
+
+MIT — see `LICENSE`.

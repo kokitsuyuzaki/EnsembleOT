@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+type: software
+title: "EnsembleOT: Ensemble Optimal Transport via randomized clustering with implicit sample-level lifting"
+authors:
+  - family-names: Tsuyuzaki
+    given-names: Koki
+repository-code: "https://github.com/kokitsuyuzaki/EnsembleOT"
+license: MIT

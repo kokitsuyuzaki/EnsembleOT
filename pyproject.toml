@@ -9,7 +9,7 @@ description = "Ensemble Optimal Transport via randomized clustering with implici
 readme = "README.md"
 requires-python = ">=3.11"
 license = { file = "LICENSE" }
-authors = [{ name = "koki" }]
+authors = [{ name = "Koki Tsuyuzaki" }]
 dependencies = [
     "numpy>=1.24",
     "scipy>=1.10",

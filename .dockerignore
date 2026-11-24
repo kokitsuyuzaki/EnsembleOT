@@ -1,0 +1,23 @@
+# Scratch experiments (not part of the package)
+experiments/
+
+# Git / editor / IDE
+.git/
+.github/
+.gitignore
+.gitattributes
+.vscode/
+.idea/
+
+# Python build / cache artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+
+# OS
+.DS_Store
+*~
+*.swp
