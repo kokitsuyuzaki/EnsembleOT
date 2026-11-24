@@ -1,6 +1,6 @@
 # EnsembleOT
 
-[![DOI](https://zenodo.org/badge/1210430822.svg)](https://zenodo.org/badge/latestdoi/1210430822)
+[![DOI](https://zenodo.org/badge/1210430822.svg)](https://doi.org/10.5281/zenodo.24490690)
 [![DockerHub/GHCR](https://github.com/kokitsuyuzaki/EnsembleOT/actions/workflows/build_test_push.yml/badge.svg)](https://github.com/kokitsuyuzaki/EnsembleOT/actions/workflows/build_test_push.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
