@@ -13,6 +13,7 @@ from .gw import run_ensemble_gw
 from .fgw import run_ensemble_fgw
 from .unbalanced import run_ensemble_unbalanced
 from .partial import run_ensemble_partial, scan_partial_mass
+from .partial_gw import run_ensemble_partial_gw
 from .aggregate import (
     MeanTransportOperator,
     WeightedMeanTransportOperator,
@@ -50,6 +51,7 @@ __all__ = [
     "run_ensemble_unbalanced",
     "run_ensemble_partial",
     "scan_partial_mass",
+    "run_ensemble_partial_gw",
     "MeanTransportOperator",
     "WeightedMeanTransportOperator",
     "ConsensusEdge",
