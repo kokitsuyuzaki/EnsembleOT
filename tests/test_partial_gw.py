@@ -1,4 +1,4 @@
-"""Stage 21: run_ensemble_partial_gw."""
+"""Stage 21 / 22: run_ensemble_partial_gw and run_ensemble_partial_fgw."""
 
 import json
 
@@ -10,11 +10,13 @@ import pytest
 from ensembleot import (
     load_operators,
     make_mean_operator,
+    run_ensemble_partial_fgw,
     run_ensemble_partial_gw,
     save_operators,
 )
 from ensembleot._runs import (
     build_cluster_problem,
+    cross_cost,
     make_seeds,
     structure_costs,
 )
@@ -109,3 +111,70 @@ def test_partial_gw_argument_validation(kwargs, match):
     X, Y = _data()
     with pytest.raises(ValueError, match=match):
         run_ensemble_partial_gw(X, Y, m=0.5, **COMMON, **kwargs)
+
+
+# --------------------------------------------------------------- partial FGW
+
+@pytest.mark.parametrize(
+    "solver_method, extra",
+    [
+        ("partial_fused_gromov_wasserstein", dict()),
+        ("partial_fused_gromov_wasserstein", dict(alpha=0.2)),
+        ("entropic_partial_fused_gromov_wasserstein", dict(reg=0.5, alpha=0.8, numItermax=100)),
+    ],
+)
+def test_partial_fgw_transports_m(solver_method, extra):
+    X, Y = _data(4)
+    runs = run_ensemble_partial_fgw(X, Y, m=0.6, solver_method=solver_method, **COMMON, **extra)
+    _check_partial(runs, 0.6, "partial_fgw", solver_method)
+    for op in runs:
+        assert op.meta["solver_params"]["cross_feature_cost_mode"] == "default"
+        assert op.meta["metrics"]["transport_cost"] >= 0
+
+
+def test_partial_fgw_matches_direct_pot_call_and_alpha_is_forwarded():
+    X, Y = _data(5)
+    runs = run_ensemble_partial_fgw(X, Y, m=0.7, alpha=0.3, **COMMON)
+    for op, seed in zip(runs, make_seeds(0, 3)):
+        prob = build_cluster_problem(X, Y, 8, 6, "kmeans", seed)
+        C1, C2 = structure_costs(prob, "sqeuclidean", True)
+        M, _ = cross_cost(prob, X, Y, "sqeuclidean", True)
+        ref = ot.gromov.partial_fused_gromov_wasserstein(M, C1, C2, prob.a, prob.b, m=0.7, alpha=0.3)
+        np.testing.assert_allclose(op.T_cluster, ref)
+        assert op.meta["solver_params"]["alpha"] == 0.3
+
+
+def test_partial_fgw_cross_modal_needs_and_uses_custom_cost():
+    X, Y = _data(6, d_y=9)
+    with pytest.raises(ValueError, match="same feature space"):
+        run_ensemble_partial_fgw(X, Y, m=0.6, **COMMON)
+
+    seen = []
+
+    def cost_fn(*, centers_x, centers_y, n_clusters_x, n_clusters_y, seed, scale, **_):
+        seen.append(seed)
+        return scale * ot.dist(centers_x[:, :2], centers_y[:, :2])
+
+    runs = run_ensemble_partial_fgw(
+        X, Y, m=0.6, cross_feature_cost_fn=cost_fn,
+        cross_feature_cost_kwargs={"scale": 2.0}, **COMMON,
+    )
+    _check_partial(runs, 0.6, "partial_fgw", "partial_fused_gromov_wasserstein")
+    assert seen == make_seeds(0, 3)
+    assert runs[0].meta["solver_params"]["cross_feature_cost_mode"] == "custom_fn"
+
+    with pytest.raises(ValueError, match="expected"):
+        run_ensemble_partial_fgw(
+            X, Y, m=0.6, cross_feature_cost_fn=lambda **_: np.zeros((2, 2)), **COMMON
+        )
+
+
+def test_partial_fgw_argument_validation():
+    X, Y = _data()
+    with pytest.raises(ValueError, match="does not accept: reg"):
+        run_ensemble_partial_fgw(X, Y, m=0.5, reg=0.1, **COMMON)
+    with pytest.raises(ValueError, match="does not accept: nb_dummies"):
+        run_ensemble_partial_fgw(
+            X, Y, m=0.5, nb_dummies=2,
+            solver_method="entropic_partial_fused_gromov_wasserstein", **COMMON,
+        )
