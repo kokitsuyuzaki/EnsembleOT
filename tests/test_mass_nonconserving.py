@@ -155,6 +155,21 @@ def test_stochastic_mixture_draws_runs_in_proportion_to_mass():
     assert abs(out.mean() - 0.75) < 0.03        # P(run B) = 0.3 / (0.1 + 0.3)
 
 
+def test_round_off_residue_counts_as_unmatched():
+    # exact solvers leave ~1e-17 where the true mass is zero
+    T = T_A.copy()
+    T[1] = [3e-17, 0.0, 1e-18]
+    op = _op(T, LX, LY)
+    F_y = np.random.default_rng(5).standard_normal((op.n_y, 2))
+    for mode in ("barycentric", "stochastic", "matched"):
+        out = op.apply_to_features(F_y, mode=mode, random_state=0)
+        assert np.isnan(out[LX == 1]).all() and np.isfinite(out[LX != 1]).all(), mode
+    mean_op = make_mean_operator([op, op])
+    for mode in ("barycentric", "stochastic", "matched"):
+        out = mean_op.apply_to_features(F_y, mode=mode, random_state=0)
+        assert np.isnan(out[LX == 1]).all() and np.isfinite(out[LX != 1]).all(), mode
+
+
 def test_metrics_report_mass_and_cost():
     a = np.array([0.3, 0.3, 0.4])
     b = np.array([0.2, 0.4, 0.4])

@@ -21,7 +21,7 @@ from typing import Sequence
 
 import numpy as np
 
-from .operator import ImplicitTransportOperator, _divide_or_nan, _quantile_match
+from .operator import ImplicitTransportOperator, _divide_or_nan, _has_mass, _quantile_match
 
 
 def _stochastic_mixture(
@@ -61,7 +61,7 @@ def _stochastic_mixture(
     cum = np.cumsum(P, axis=1)
     u = rng.random(n_out) * tot
     run_idx = np.minimum((u[:, None] >= cum).sum(axis=1), len(operators) - 1)
-    run_idx = np.where(tot > 0, run_idx, -1)                     # -1: unmatched everywhere
+    run_idx = np.where(_has_mass(tot), run_idx, -1)              # -1: unmatched everywhere
     out = np.full((n_out, n_feat), np.nan, dtype=float)
     for k, op in enumerate(operators):
         sel = np.flatnonzero(run_idx == k)

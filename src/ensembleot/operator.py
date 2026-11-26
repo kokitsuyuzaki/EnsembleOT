@@ -39,8 +39,20 @@ import numpy as np
 
 from .lifting import aggregate_by_label, broadcast_to_samples
 
-# Transport mass below this is treated as "this sample is not transported".
+# A sample counts as "not transported" when its transport mass is zero up to
+# round-off: below ``_MASS_RTOL`` times the largest per-sample mass (exact
+# solvers leave residues around 1e-17 where the true mass is 0), or below the
+# absolute floor ``_MASS_EPS``.
 _MASS_EPS = 1e-30
+_MASS_RTOL = 1e-10
+
+
+def _has_mass(mass: np.ndarray) -> np.ndarray:
+    """Boolean mask of entries of ``mass`` that carry real transport mass."""
+    mass = np.asarray(mass, dtype=float)
+    if mass.size == 0:
+        return np.zeros(mass.shape, dtype=bool)
+    return mass > max(_MASS_EPS, _MASS_RTOL * float(np.max(mass)))
 
 
 def _divide_or_nan(num: np.ndarray, mass: np.ndarray) -> np.ndarray:
@@ -53,7 +65,7 @@ def _divide_or_nan(num: np.ndarray, mass: np.ndarray) -> np.ndarray:
     """
     num = np.asarray(num, dtype=float)
     mass = np.asarray(mass, dtype=float).reshape(-1)
-    ok = mass > _MASS_EPS
+    ok = _has_mass(mass)
     out = np.full(num.shape, np.nan, dtype=float)
     if num.ndim == 1:
         out[ok] = num[ok] / mass[ok]
@@ -102,7 +114,9 @@ def _stochastic_sample(
         starts[1:] = np.cumsum(sizes_in)[:-1]
 
     cnt = sizes_in[chosen]
-    valid = (rowsum[a, 0] > 0) & (cnt > 0)
+    sizes_out = np.bincount(labels_out, minlength=K_out).astype(float)
+    density = np.divide(rowsum[:, 0], sizes_out, out=np.zeros(K_out), where=sizes_out > 0)
+    valid = _has_mass(density)[a] & (cnt > 0)                # per-sample mass, as in barycentric
     offsets = np.zeros(m, dtype=int)
     nz = cnt > 0
     offsets[nz] = np.floor(rng.random(int(nz.sum())) * cnt[nz]).astype(int)
