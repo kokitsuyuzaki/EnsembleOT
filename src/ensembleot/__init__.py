@@ -38,6 +38,15 @@ from .io import (
     StorageFormatError,
     FORMAT_VERSION,
 )
+from .barycenter import (
+    BarycenterResult,
+    run_ensemble_free_support_barycenter,
+    pool_barycenters,
+    weighted_pool_barycenters,
+    run_ensemble_barycenter,
+    transport_features_to_barycenter,
+)
+from .io import save_barycenters, load_barycenters
 
 __all__ = [
     "ClusteringConfig",
@@ -74,6 +83,14 @@ __all__ = [
     "normalize_weights",
     "make_metric_weighted_mean_operator",
     "metric_weighted_consensus_edges",
+    "BarycenterResult",
+    "run_ensemble_free_support_barycenter",
+    "pool_barycenters",
+    "weighted_pool_barycenters",
+    "run_ensemble_barycenter",
+    "transport_features_to_barycenter",
+    "save_barycenters",
+    "load_barycenters",
 ]
 
 __version__ = "0.3.0"
