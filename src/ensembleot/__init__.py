@@ -12,6 +12,7 @@ from .sinkhorn import run_ensemble_sinkhorn
 from .gw import run_ensemble_gw
 from .fgw import run_ensemble_fgw
 from .unbalanced import run_ensemble_unbalanced
+from .partial import run_ensemble_partial, scan_partial_mass
 from .aggregate import (
     MeanTransportOperator,
     WeightedMeanTransportOperator,
@@ -47,6 +48,8 @@ __all__ = [
     "run_ensemble_gw",
     "run_ensemble_fgw",
     "run_ensemble_unbalanced",
+    "run_ensemble_partial",
+    "scan_partial_mass",
     "MeanTransportOperator",
     "WeightedMeanTransportOperator",
     "ConsensusEdge",
