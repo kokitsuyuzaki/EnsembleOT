@@ -194,6 +194,23 @@ def require(solver_method: str, **kwargs: Any) -> None:
         )
 
 
+def clip_mass(kwargs: Mapping[str, Any], prob: ClusterProblem) -> dict[str, Any]:
+    """Guard ``m`` against round-off in the cluster marginals.
+
+    POT rejects ``m > min(|a|, |b|)``. The cluster marginals sum to 1 only up
+    to floating point (e.g. 0.9999999999999999), so a caller's ``m=1.0`` can
+    be "infeasible" by one ulp. An ``m`` that exceeds the bound by no more
+    than 1e-9 is clipped to it; anything larger is left for POT to reject.
+    """
+    out = dict(kwargs)
+    m = out.get("m")
+    if m is not None:
+        cap = float(min(prob.a.sum(), prob.b.sum()))
+        if cap < m <= cap + 1e-9:
+            out["m"] = cap
+    return out
+
+
 def jsonable(value: Any) -> Any:
     """Turn solver arguments into plain JSON-friendly Python values."""
     if isinstance(value, (bool, str)) or value is None:

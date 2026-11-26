@@ -56,9 +56,17 @@ docker run --rm -it koki/ensembleot:latest python -c "import ensembleot; print(e
       (`ot.gromov.fused_gromov_wasserstein` /
       `ot.gromov.entropic_fused_gromov_wasserstein`) as is. EnsembleOT does
       not redefine it.
-- The three entry points (Sinkhorn / GW / FGW), aggregation over multiple
-  runs, metrics, weighted aggregation, and result persistence (storage) are
-  all implemented.
+- **Unbalanced and partial OT** (since v0.4.0) have their own entry points,
+  one per POT solver family — see
+  [Unbalanced and partial OT](#unbalanced-and-partial-ot-since-v040):
+  `run_ensemble_unbalanced`, `run_ensemble_partial`,
+  `run_ensemble_partial_gw`, `run_ensemble_partial_fgw`,
+  `run_ensemble_fused_unbalanced_gw`.
+- **Wasserstein barycenters** of two or more datasets (since v0.4.0) —
+  see [Wasserstein barycenters](#wasserstein-barycenters-since-v040):
+  `run_ensemble_free_support_barycenter`, `run_ensemble_barycenter`.
+- All entry points, aggregation over multiple runs, metrics, weighted
+  aggregation, and result persistence (storage) are implemented.
 
 ## End-to-end example (Sinkhorn + metric-weighted aggregation)
 
@@ -229,6 +237,181 @@ each source, a run is drawn with probability proportional to its weight and
 that run's stochastic transport is used — and matched applies quantile
 matching to the aggregated barycentric output (neither the `(R, n_x, n_y)`
 stack nor a dense T is built).
+
+## Unbalanced and partial OT (since v0.4.0)
+
+Balanced OT forces every bit of mass to be transported. These entry points
+relax that, which matters when one dataset contains a population the other
+lacks, or when the same populations occur in different proportions.
+
+| Entry point | Cost | POT solvers (`solver_method`) |
+|---|---|---|
+| `run_ensemble_unbalanced` | feature | `sinkhorn_unbalanced` (default), `mm_unbalanced`, `lbfgsb_unbalanced` |
+| `run_ensemble_partial` | feature | `partial_wasserstein` (default), `entropic_partial_wasserstein`, `partial_wasserstein_lagrange` |
+| `run_ensemble_partial_gw` | structure | `partial_gromov_wasserstein` (default), `entropic_partial_gromov_wasserstein` |
+| `run_ensemble_partial_fgw` | feature + structure | `partial_fused_gromov_wasserstein` (default), `entropic_partial_fused_gromov_wasserstein` |
+| `run_ensemble_fused_unbalanced_gw` | structure (+ feature) | `fused_unbalanced_gromov_wasserstein` |
+
+The two relaxations differ in kind:
+
+- **Partial** transports exactly a mass `m` (a hard constraint). Mass can be
+  dropped but never created. Cluster marginals sum to 1, so `m` is the
+  *fraction* of mass to transport, exactly as in POT.
+- **Unbalanced** penalizes deviation from the marginals with strength
+  `reg_m` (a soft constraint). Mass can be dropped *or created*, and the
+  total transported mass is an outcome rather than an input.
+
+### Arguments follow POT
+
+- Solver arguments keep POT's names, meanings and defaults and are forwarded
+  verbatim. They are keyword-only. An argument left at `None` is not passed,
+  so POT's own default for the selected solver applies.
+- Passing an argument the selected solver does not accept raises
+  `ValueError` instead of being silently ignored.
+- `solver_method` is the name of the POT function that solves the
+  cluster-level problem.
+- The GW-family unbalanced solver uses the argument names of its POT
+  function (`reg_marginals`, `epsilon`, `divergence`, `unbalanced_solver`,
+  `max_iter`, `tol`), not the `reg` / `reg_m` names of `ot.unbalanced`.
+  Its `alpha` is also POT's: a free non-negative weight on the feature term
+  (`alpha=0`, the default, is plain unbalanced GW) — **not** the convex
+  weight of balanced FGW. `run_ensemble_partial_fgw` keeps the balanced FGW
+  meaning of `alpha`.
+- `normalize_cost=True` (default) divides each cluster-level cost matrix by
+  its maximum, as the balanced entry points do. **`reg_m` / `reg_marginals`
+  act relative to the cost scale**, so set `normalize_cost=False` to give
+  POT the raw `ot.dist` cost that a direct POT call would see.
+- `float("inf")` in `reg_m` (keep one marginal exact) is supported only by
+  `sinkhorn_unbalanced`; the other unbalanced solvers need finite values.
+
+```python
+import numpy as np
+from ensembleot import (
+    run_ensemble_partial, run_ensemble_unbalanced, make_mean_operator,
+)
+
+rng = np.random.default_rng(0)
+shared = rng.standard_normal((300, 5))
+only_in_x = rng.standard_normal((300, 5)) + 8.0     # no counterpart in Y
+X = np.vstack([shared, only_in_x])
+Y = rng.standard_normal((400, 5))
+
+# Partial: transport half of the mass
+runs = run_ensemble_partial(X, Y, 20, 15, n_runs=8, m=0.5, random_state=0)
+mean_op = make_mean_operator(runs)
+
+kept = mean_op.transported_mass_x(relative=True)    # (n_x,), 1.0 = fully matched
+F_x = mean_op.apply_to_features(Y)                  # NaN where nothing was matched
+
+# Unbalanced: let the solver decide how much mass to move
+runs_u = run_ensemble_unbalanced(
+    X, Y, 20, 15, n_runs=8, reg=0.05, reg_m=0.5, random_state=0
+)
+```
+
+### Unmatched samples
+
+Row and column sums of these couplings no longer equal the sample masses.
+
+- `transported_mass_x()` / `transported_mass_y()` (on single-run and mean
+  operators) return the transport mass of every sample;
+  `relative=True` rescales so that 1.0 means "all of the sample's mass is
+  transported". Averaged over runs this is a soft matching score.
+- A sample with no transport mass has no image: `apply_to_features` returns
+  **NaN** for it in every `mode`. Samples with small but non-zero mass get a
+  finite value computed from little mass — threshold on the transported mass
+  if you need a clean mask.
+- `op.meta["metrics"]` gains `transported_mass`, `transport_cost` (where a
+  feature cost exists) and, for partial solvers, `mass_error`. For these
+  solvers `marginal_error_row` / `marginal_error_col` measure the intended
+  relaxation, not solver error, so do not use them to weight runs.
+- **Granularity.** Mass is dropped per cluster and spread uniformly inside
+  it, so a single run says "every sample of this cluster keeps 60 % of its
+  mass". Sample-level resolution comes from averaging runs with different
+  clusterings.
+
+### Choosing `m`
+
+There is no canonical rule. Prior knowledge of the shared fraction is best;
+otherwise sweep `m` and look for the bend where forcing unmatched mass
+across makes the cost jump. The cluster-level problems are small, so the
+sweep is cheap:
+
+```python
+from ensembleot import scan_partial_mass
+
+res = scan_partial_mass(
+    X, Y, 20, 15, n_runs=8, m_values=np.linspace(0.1, 1.0, 10), random_state=0
+)
+res["m_mid"], res["marginal_cost"]    # cost of the last unit of mass vs. m
+```
+
+### Behavior changes in v0.4.0
+
+- Samples with zero transport mass now yield NaN instead of 0
+  (`mode="barycentric"` / `"matched"`) or the global feature mean
+  (`mode="stochastic"`). Balanced couplings are unaffected.
+- `mode="stochastic"` on mean operators draws the run for each sample with
+  probability ∝ run weight × that sample's transport mass. The distribution
+  is unchanged for balanced runs, but a fixed `random_state` gives a
+  different draw than v0.3.0.
+- POT >= 0.9.6 is required.
+
+## Wasserstein barycenters (since v0.4.0)
+
+The barycenter of two or more datasets living in the same feature space,
+again computed on cluster-level measures only.
+
+| Entry point | Clustering | POT solvers (`solver_method`) |
+|---|---|---|
+| `run_ensemble_free_support_barycenter` | each dataset independently | `free_support_barycenter` (default), `free_support_sinkhorn_barycenter` |
+| `run_ensemble_barycenter` | pooled data, one shared set of centers | `lp_barycenter` (default), `bregman_barycenter` |
+
+- **Free support** optimizes the *positions* of `n_support` atoms (weights
+  `b` fixed, uniform by default).
+- **Fixed support** optimizes the *weights* on the shared cluster centers.
+
+```python
+from ensembleot import (
+    run_ensemble_free_support_barycenter, pool_barycenters,
+    transport_features_to_barycenter,
+)
+
+rng = np.random.default_rng(0)
+Xs = [rng.standard_normal((1000, 2)) + c for c in ([0, 0], [6, 0], [3, 5])]
+
+runs = run_ensemble_free_support_barycenter(
+    Xs, n_clusters=20, n_support=15, n_runs=8, random_state=0
+)
+bary = pool_barycenters(runs)          # all runs' atoms, each run weighted 1/R
+bary.support, bary.weights             # (8 * 15, 2), (8 * 15,)
+bary.mean()                            # ~ (3, 5/3)
+
+# carry features of dataset 0 onto the pooled atoms
+F_atoms = transport_features_to_barycenter(runs, 0, Xs[0])
+```
+
+Things to know:
+
+- Atoms of different runs have no correspondence, so runs are combined by
+  **pooling atoms**, not by averaging coordinates. The pooled measure is a
+  mixture of barycenter estimates (a bagging-style estimator); it is not
+  itself the minimizer of the barycenter objective.
+- **Free support shrinks, fixed support spreads.** Cluster means lose the
+  within-cluster spread, so the free-support barycenter is somewhat too
+  tight (use more clusters to reduce this). Fixed-support centers only exist
+  where data exists, while a barycenter can sit *between* datasets, so its
+  mass is smeared onto distant centers. Prefer free support when the
+  datasets are far apart; fixed support is fine when they overlap.
+- Each run's result carries one `ImplicitTransportOperator` per dataset
+  (barycenter atoms ↔ samples), so the usual `apply_to_features` /
+  `apply_transpose_to_features` work between the barycenter and every
+  dataset. Atoms of zero weight return NaN.
+- `save_barycenters` / `load_barycenters` persist results in a single
+  `.npz`.
+- Gromov–Wasserstein barycenters are not provided: their output is a
+  structure matrix whose nodes have no correspondence across runs, and no
+  sound way to aggregate them is implemented.
 
 ## Authors
 

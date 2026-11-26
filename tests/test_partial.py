@@ -167,3 +167,18 @@ def test_scan_partial_mass_validation():
         scan_partial_mass(X, Y, m_values=[0.0, 0.5], **COMMON)
     with pytest.raises(ValueError, match="takes m"):
         scan_partial_mass(X, Y, m_values=[0.5], solver_method="partial_wasserstein_lagrange", **COMMON)
+
+
+def test_m_equal_to_one_survives_round_off_in_cluster_marginals():
+    # cluster marginals can sum to 0.9999999999999999, which made POT reject m=1.0
+    rng = np.random.default_rng(0)
+    X = np.vstack([rng.standard_normal((300, 5)), rng.standard_normal((300, 5)) + 8.0])
+    Y = rng.standard_normal((400, 5))
+    runs = run_ensemble_partial(X, Y, 20, 15, 8, m=1.0, random_state=0)
+    for op in runs:
+        assert op.T_cluster.sum() == pytest.approx(1.0)
+        assert op.meta["metrics"]["mass_error"] < 1e-9
+    res = scan_partial_mass(X, Y, 20, 15, 8, m_values=np.linspace(0.1, 1.0, 10), random_state=0)
+    assert np.isfinite(res["transport_cost"]).all()
+    with pytest.raises(ValueError):                      # a genuinely infeasible m is still POT's call
+        run_ensemble_partial(X, Y, 20, 15, 2, m=1.2, random_state=0)

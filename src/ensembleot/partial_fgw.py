@@ -20,6 +20,7 @@ import ot.gromov
 
 from ._runs import (
     build_cluster_problem,
+    clip_mass,
     cross_cost,
     forwarded,
     make_operator,
@@ -154,7 +155,7 @@ def run_ensemble_partial_fgw(
             prob, X, Y, metric, normalize_cost,
             cross_feature_cost_fn, cross_feature_cost_kwargs,
         )
-        T_cluster = np.asarray(fn(M, C1, C2, prob.a, prob.b, **kwargs))
+        T_cluster = np.asarray(fn(M, C1, C2, prob.a, prob.b, **clip_mass(kwargs, prob)))
         target = min(prob.a.sum(), prob.b.sum()) if m is None else m
         extra = cost_metrics(T_cluster, M)
         extra.update(partial_mass_metrics(T_cluster, target))

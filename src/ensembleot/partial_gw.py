@@ -20,6 +20,7 @@ import ot.gromov
 
 from ._runs import (
     build_cluster_problem,
+    clip_mass,
     forwarded,
     make_operator,
     make_seeds,
@@ -136,7 +137,7 @@ def run_ensemble_partial_gw(
             coords_x=coords_x, coords_y=coords_y,
         )
         C1, C2 = structure_costs(prob, metric, normalize_cost)
-        T_cluster = np.asarray(fn(C1, C2, prob.a, prob.b, **kwargs))
+        T_cluster = np.asarray(fn(C1, C2, prob.a, prob.b, **clip_mass(kwargs, prob)))
         target = min(prob.a.sum(), prob.b.sum()) if m is None else m
         operators.append(
             make_operator(

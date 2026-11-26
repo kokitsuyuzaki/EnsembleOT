@@ -23,6 +23,7 @@ import ot.partial
 
 from ._runs import (
     build_cluster_problem,
+    clip_mass,
     cross_cost,
     forwarded,
     make_operator,
@@ -150,7 +151,7 @@ def run_ensemble_partial(
             X, Y, n_clusters_x, n_clusters_y, clustering_method, seed
         )
         M, _ = cross_cost(prob, X, Y, metric, normalize_cost)
-        T_cluster = np.asarray(fn(prob.a, prob.b, M, **kwargs))
+        T_cluster = np.asarray(fn(prob.a, prob.b, M, **clip_mass(kwargs, prob)))
         extra = cost_metrics(T_cluster, M)
         extra.update(_mass_metrics(solver_method, T_cluster, m, prob))
         operators.append(
@@ -231,7 +232,7 @@ def scan_partial_mass(
         )
         M, _ = cross_cost(prob, X, Y, metric, normalize_cost)
         for k, (fn, kwargs) in enumerate(calls):
-            T_cluster = np.asarray(fn(prob.a, prob.b, M, **kwargs))
+            T_cluster = np.asarray(fn(prob.a, prob.b, M, **clip_mass(kwargs, prob)))
             cost[k, r] = float(np.sum(T_cluster * M))
             mass[k, r] = float(T_cluster.sum())
 
