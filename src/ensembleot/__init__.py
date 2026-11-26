@@ -39,7 +39,9 @@ from .barycenter import (
     pool_barycenters,
     weighted_pool_barycenters,
     run_ensemble_barycenter,
+    transport_features_to_barycenter,
 )
+from .io import save_barycenters, load_barycenters
 
 __all__ = [
     "ClusteringConfig",
@@ -75,6 +77,9 @@ __all__ = [
     "pool_barycenters",
     "weighted_pool_barycenters",
     "run_ensemble_barycenter",
+    "transport_features_to_barycenter",
+    "save_barycenters",
+    "load_barycenters",
 ]
 
 __version__ = "0.3.0"

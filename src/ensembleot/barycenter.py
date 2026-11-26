@@ -38,6 +38,8 @@ import ot
 
 from .aggregate import _normalize_weights
 from .clustering import cluster_means, cluster_samples_with_info, cluster_sizes
+from .metrics import cluster_shape_metrics, transport_metrics
+from .operator import ImplicitTransportOperator
 
 FreeSupportSolverMethod = Literal[
     "free_support_barycenter", "free_support_sinkhorn_barycenter"
@@ -69,14 +71,30 @@ class BarycenterResult:
     ``solver_family`` / ``solver_name`` / ``seed`` / ``solver_params`` /
     ``metrics``. ``run_index`` is set only on pooled results and gives, for
     each atom, the index of the run it came from.
+
+    ``operators[k]`` (per-run results only) links the barycenter to dataset
+    ``k``: an ``ImplicitTransportOperator`` of shape ``(n_atoms, n_k)`` whose
+    source side is the barycenter atoms (each atom is a singleton cluster
+    with normalization factor 1) and whose target side is the samples of
+    dataset ``k`` with their cluster labels / cluster cardinalities. Its
+    implicit plan has row sums ``weights`` and column sums ``1 / n_k``, so
+    ``operators[k].apply_to_features(F_k)`` gives, per atom, the
+    plan-weighted average of dataset ``k``'s features (barycentric
+    projection), and ``apply_transpose_to_features`` carries atom-level
+    values back to the samples. An atom of zero weight has an all-zero row
+    and receives zeros.
     """
 
     support: np.ndarray                      # (n_atoms, d)
     weights: np.ndarray                      # (n_atoms,), sums to 1
     meta: dict[str, Any] = field(default_factory=dict)
     run_index: np.ndarray | None = None      # (n_atoms,) int, pooled results only
+    operators: list[ImplicitTransportOperator] = field(default_factory=list)
 
     def __post_init__(self) -> None:
+        for op in self.operators:
+            if op.n_x != self.support.shape[0]:
+                raise ValueError("operator source size must equal the number of atoms")
         if self.support.ndim != 2:
             raise ValueError("support must be 2-D (n_atoms, d)")
         if self.weights.shape != (self.support.shape[0],):
@@ -222,6 +240,79 @@ def _coupling_metrics(
     }
 
 
+def _dataset_operators(
+    plans: list[np.ndarray],
+    bary_weights: np.ndarray,
+    labels: list[np.ndarray],
+    sizes: list[np.ndarray],
+    base_meta: dict[str, Any],
+) -> list[ImplicitTransportOperator]:
+    """Wrap each barycenter -> dataset plan in an ImplicitTransportOperator.
+
+    Source side: atoms as singleton clusters (labels ``arange``, factor 1).
+    Target side: the dataset's samples, cluster labels and cardinalities.
+    """
+    n_atoms = bary_weights.shape[0]
+    atom_labels = np.arange(n_atoms, dtype=np.int64)
+    atom_mass = np.ones(n_atoms, dtype=np.float64)
+    operators = []
+    for k, (plan, labels_k, sizes_k) in enumerate(zip(plans, labels, sizes)):
+        metrics = cluster_shape_metrics(atom_labels, labels_k, atom_mass, sizes_k, plan)
+        metrics.update(transport_metrics(plan, bary_weights, sizes_k / sizes_k.sum()))
+        operators.append(
+            ImplicitTransportOperator(
+                labels_x=atom_labels,
+                labels_y=labels_k,
+                T_cluster=plan,
+                cluster_mass_x=atom_mass,
+                cluster_mass_y=sizes_k,
+                meta={
+                    **base_meta,
+                    "role": "barycenter_to_dataset",
+                    "dataset_index": k,
+                    "metrics": metrics,
+                },
+            )
+        )
+    return operators
+
+
+def transport_features_to_barycenter(
+    results: Sequence[BarycenterResult],
+    dataset_index: int,
+    F: np.ndarray,
+    normalize: bool = True,
+    mode: str = "barycentric",
+    random_state: int | None = None,
+) -> np.ndarray:
+    """Carry features of one dataset onto the atoms of several runs.
+
+    Applies ``res.operators[dataset_index].apply_to_features(F, ...)`` for
+    every run and concatenates the outputs in run order, i.e. row ``i`` of
+    the result belongs to atom ``i`` of ``pool_barycenters(results)``.
+    ``F`` has one row per sample of the dataset; ``normalize`` / ``mode`` /
+    ``random_state`` are those of ``apply_to_features`` (``random_state`` is
+    shifted by the run index).
+    """
+    results = list(results)
+    if len(results) == 0:
+        raise ValueError("results must be non-empty")
+    outputs = []
+    for r, res in enumerate(results):
+        if not 0 <= dataset_index < len(res.operators):
+            raise ValueError(
+                f"run #{r} has no operator for dataset_index={dataset_index} "
+                "(pooled results carry none; pass the per-run results)"
+            )
+        seed = None if random_state is None else random_state + r
+        outputs.append(
+            res.operators[dataset_index].apply_to_features(
+                F, normalize=normalize, mode=mode, random_state=seed
+            )
+        )
+    return np.concatenate(outputs, axis=0)
+
+
 # ---------------------------------------------------------------------------
 # pooling across runs
 # ---------------------------------------------------------------------------
@@ -240,6 +331,10 @@ def weighted_pool_barycenters(
     total and is normalized to sum to 1, like the weights of
     ``make_weighted_mean_operator``; the output of
     :func:`ensembleot.compute_run_weights` (called on ``results``) fits.
+
+    The pooled result carries no operators (every run has its own
+    clustering); use :func:`transport_features_to_barycenter` on the per-run
+    results to get features aligned with the pooled atoms.
     """
     results = list(results)
     if len(results) == 0:
@@ -306,7 +401,7 @@ def _single_run_free_support(
     seed: int,
 ) -> BarycenterResult:
     K = len(Xs)
-    centers, masses, inertias = [], [], []
+    centers, masses, inertias, all_labels, all_sizes = [], [], [], [], []
     for k, X in enumerate(Xs):
         labels, info = cluster_samples_with_info(
             X, clustering_method, n_clusters[k], random_state=seed + k
@@ -314,6 +409,8 @@ def _single_run_free_support(
         sizes = cluster_sizes(labels, n_clusters[k]).astype(float)
         centers.append(cluster_means(X, labels, n_clusters[k]).astype(np.float64))
         masses.append(sizes / X.shape[0])
+        all_labels.append(labels)
+        all_sizes.append(sizes)
         if "inertia" in info:
             inertias.append(float(info["inertia"]))
 
@@ -371,7 +468,14 @@ def _single_run_free_support(
         "solver_params": _json_params(pot_kwargs),
         "metrics": metrics,
     }
-    return BarycenterResult(support=support, weights=b.copy(), meta=meta)
+    operators = _dataset_operators(
+        plans, b, all_labels, all_sizes,
+        {"solver_family": meta["solver_family"], "solver_name": solver_method,
+         "seed": int(seed)},
+    )
+    return BarycenterResult(
+        support=support, weights=b.copy(), meta=meta, operators=operators
+    )
 
 
 def run_ensemble_free_support_barycenter(
@@ -518,13 +622,9 @@ def _single_run_fixed_support(
 
     # A[:, k]: fraction of dataset k's samples in each shared cluster.
     bounds = np.concatenate([[0], np.cumsum([X.shape[0] for X in Xs])])
-    A = np.stack(
-        [
-            cluster_sizes(labels[bounds[k]:bounds[k + 1]], n_clusters) / Xs[k].shape[0]
-            for k in range(K)
-        ],
-        axis=1,
-    )
+    labels_per_dataset = [labels[bounds[k]:bounds[k + 1]] for k in range(K)]
+    counts = [cluster_sizes(lab, n_clusters).astype(float) for lab in labels_per_dataset]
+    A = np.stack([c / c.sum() for c in counts], axis=1)
 
     M = ot.dist(centers, centers, metric="sqeuclidean")
     cost_scale = float(M.max()) if normalize_cost and M.max() > 0 else 1.0
@@ -594,7 +694,14 @@ def _single_run_fixed_support(
         "solver_params": solver_params,
         "metrics": metrics,
     }
-    return BarycenterResult(support=centers, weights=bary, meta=meta)
+    # Operators go through the shared clustering: dataset k's samples keep
+    # their shared-cluster labels, normalized by dataset k's own counts.
+    operators = _dataset_operators(
+        plans, bary, labels_per_dataset, counts,
+        {"solver_family": meta["solver_family"], "solver_name": solver_method,
+         "seed": int(seed)},
+    )
+    return BarycenterResult(support=centers, weights=bary, meta=meta, operators=operators)
 
 
 def run_ensemble_barycenter(
