@@ -38,6 +38,7 @@ from .barycenter import (
     run_ensemble_free_support_barycenter,
     pool_barycenters,
     weighted_pool_barycenters,
+    run_ensemble_barycenter,
 )
 
 __all__ = [
@@ -73,6 +74,7 @@ __all__ = [
     "run_ensemble_free_support_barycenter",
     "pool_barycenters",
     "weighted_pool_barycenters",
+    "run_ensemble_barycenter",
 ]
 
 __version__ = "0.3.0"

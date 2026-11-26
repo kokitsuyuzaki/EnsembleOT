@@ -29,6 +29,7 @@ built.
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 from typing import Any, Literal, Sequence
 
@@ -179,14 +180,20 @@ def _couple(
 
     Solved with ``ot.emd`` (or ``ot.sinkhorn`` when ``entropic``) on the
     strictly positive entries of ``a`` and ``b`` only; rows / columns of
-    zero-mass atoms are exactly zero in the returned plan.
+    zero-mass atoms are exactly zero in the returned plan. POT's convergence
+    warning is silenced for this auxiliary solve; callers record the
+    marginal errors of the plan in ``meta["metrics"]`` instead.
     """
     pa, pb = a > 0, b > 0
     a_pos = a[pa] / a[pa].sum()
     b_pos = b[pb] / b[pb].sum()
     M_pos = np.ascontiguousarray(M[np.ix_(pa, pb)])
     if entropic:
-        P = ot.sinkhorn(a_pos, b_pos, M_pos, **kwargs)
+        # log-domain iterations: same optimum as method="sinkhorn", but they
+        # do not break down when exp(-M / reg) underflows.
+        P = ot.sinkhorn(
+            a_pos, b_pos, M_pos, method="sinkhorn_log", warn=False, **kwargs
+        )
     else:
         P = ot.emd(a_pos, b_pos, M_pos)
     out = np.zeros(M.shape, dtype=np.float64)
@@ -336,7 +343,7 @@ def _single_run_free_support(
             "raw squared Euclidean cost)"
         )
 
-    # Barycenter -> dataset plans, with the same inner solver POT iterates on.
+    # Barycenter -> dataset plans for the same inner problem POT iterates on.
     couple_kwargs: dict[str, Any] = {}
     if entropic:
         couple_kwargs["reg"] = pot_kwargs["reg"]
@@ -456,6 +463,233 @@ def run_ensemble_free_support_barycenter(
             clustering_method=clustering_method,
             solver_method=solver_method,
             pot_kwargs=pot_kwargs,
+            seed=seed,
+        )
+        for seed in _run_seeds(random_state, n_runs)
+    ]
+
+
+# ---------------------------------------------------------------------------
+# fixed-support barycenter
+# ---------------------------------------------------------------------------
+
+FixedSupportSolverMethod = Literal["lp_barycenter", "bregman_barycenter"]
+
+# ``histogram_eps`` is EnsembleOT's own (not forwarded); it only exists for
+# the entropic solver, so it is validated through the same table.
+_FIXED_SUPPORT_SOLVERS: dict[str, tuple[str, frozenset[str]]] = {
+    "lp_barycenter": ("ot.lp.barycenter", frozenset({"solver"})),
+    "bregman_barycenter": (
+        "ot.bregman.barycenter",
+        frozenset({"reg", "method", "numItermax", "stopThr", "histogram_eps"}),
+    ),
+}
+
+_DEFAULT_HISTOGRAM_EPS = 1e-12
+
+
+def _smooth_histograms(A: np.ndarray, eps: float) -> np.ndarray:
+    """Mix every column with the uniform histogram: ``(1 - eps) A + eps / n``.
+
+    Columns stay exactly normalized and become strictly positive.
+    """
+    if eps == 0.0:
+        return A
+    return (1.0 - eps) * A + eps / A.shape[0]
+
+
+def _single_run_fixed_support(
+    Xs: list[np.ndarray],
+    pooled: np.ndarray,
+    n_clusters: int,
+    weights: np.ndarray,
+    clustering_method: str,
+    solver_method: str,
+    pot_kwargs: dict[str, Any],
+    histogram_eps: float,
+    normalize_cost: bool,
+    seed: int,
+) -> BarycenterResult:
+    K = len(Xs)
+    labels, info = cluster_samples_with_info(
+        pooled, clustering_method, n_clusters, random_state=seed
+    )
+    centers = cluster_means(pooled, labels, n_clusters).astype(np.float64)
+
+    # A[:, k]: fraction of dataset k's samples in each shared cluster.
+    bounds = np.concatenate([[0], np.cumsum([X.shape[0] for X in Xs])])
+    A = np.stack(
+        [
+            cluster_sizes(labels[bounds[k]:bounds[k + 1]], n_clusters) / Xs[k].shape[0]
+            for k in range(K)
+        ],
+        axis=1,
+    )
+
+    M = ot.dist(centers, centers, metric="sqeuclidean")
+    cost_scale = float(M.max()) if normalize_cost and M.max() > 0 else 1.0
+    M = M / cost_scale
+
+    pot_name = _FIXED_SUPPORT_SOLVERS[solver_method][0]
+    entropic = solver_method == "bregman_barycenter"
+    metrics: dict[str, Any] = {}
+    if entropic:
+        kwargs = dict(pot_kwargs)
+        bary, log = ot.bregman.barycenter(
+            _smooth_histograms(A, histogram_eps), M, kwargs.pop("reg"),
+            weights=weights, log=True, **kwargs,
+        )
+        metrics["n_iter"] = int(log["niter"])
+        if len(log["err"]):
+            metrics["solver_err"] = float(log["err"][-1])
+    else:
+        bary, log = ot.lp.barycenter(A, M, weights=weights, log=True, **pot_kwargs)
+        metrics["lp_objective"] = float(log["fun"])
+        metrics["lp_status"] = int(log["status"])
+
+    bary = np.asarray(bary, dtype=np.float64)
+    if not np.all(np.isfinite(bary)):
+        raise RuntimeError(
+            f"{pot_name} returned non-finite barycenter weights; for the entropic "
+            "solver try a larger `reg` or method='sinkhorn_log'"
+        )
+    bary = np.maximum(bary, 0.0)  # LP solvers may return -0.0 / tiny negatives
+    total = float(bary.sum())
+    metrics["weights_sum_raw"] = total
+    if total <= 0:
+        raise RuntimeError(f"{pot_name} returned an all-zero barycenter")
+    if abs(total - 1.0) > 1e-3:
+        # happens when the entropic iterations stop early or break down
+        warnings.warn(
+            f"{pot_name} returned weights summing to {total:.6g} instead of 1; "
+            "renormalizing, but the solver has probably not converged "
+            "(see meta['metrics']['weights_sum_raw'])",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+    bary = bary / total
+
+    couple_kwargs: dict[str, Any] = {}
+    if entropic:
+        couple_kwargs["reg"] = pot_kwargs["reg"]
+    masses = [A[:, k] for k in range(K)]
+    plans = [_couple(bary, m, M, entropic, **couple_kwargs) for m in masses]
+    metrics.update(_coupling_metrics(plans, [M] * K, bary, masses, weights))
+    if "inertia" in info:
+        metrics["clustering_inertia"] = float(info["inertia"])
+
+    solver_params = _json_params(pot_kwargs)
+    if entropic:
+        solver_params["histogram_eps"] = float(histogram_eps)
+    meta = {
+        "solver_family": "barycenter",
+        "solver_name": solver_method,
+        "clustering_method": clustering_method,
+        "seed": int(seed),
+        "n_datasets": K,
+        "n_clusters": int(n_clusters),
+        "barycentric_weights": [float(v) for v in weights],
+        "normalize_cost": bool(normalize_cost),
+        "cost_scale": cost_scale,
+        "solver_params": solver_params,
+        "metrics": metrics,
+    }
+    return BarycenterResult(support=centers, weights=bary, meta=meta)
+
+
+def run_ensemble_barycenter(
+    Xs: Sequence[np.ndarray],
+    n_clusters: int,
+    n_runs: int,
+    weights: np.ndarray | Sequence[float] | None = None,
+    clustering_method: str = "kmeans",
+    solver_method: FixedSupportSolverMethod = "lp_barycenter",
+    reg: float | None = None,
+    method: str | None = None,
+    numItermax: int | None = None,
+    stopThr: float | None = None,
+    solver: str | None = None,
+    histogram_eps: float | None = None,
+    normalize_cost: bool = True,
+    random_state: int | None = None,
+) -> list[BarycenterResult]:
+    """Run an ensemble of fixed-support Wasserstein barycenters.
+
+    Per run: the pooled samples of all datasets are clustered once (per-run
+    seed) into ``n_clusters`` shared clusters whose means are the fixed
+    support. Dataset ``k`` becomes the histogram ``A[:, k]`` (its fraction of
+    samples in each shared cluster), the cost is the squared Euclidean
+    distance between the shared centers, and POT optimizes the barycenter
+    weights on those centers. The pooled clustering sees every sample once,
+    so larger datasets have more influence on where the centers are placed.
+
+    Parameters
+    ----------
+    Xs : sequence of K >= 2 arrays ``(n_k, d)`` sharing ``d``.
+    n_clusters : number of shared clusters (= barycenter atoms).
+    n_runs : number of randomized runs.
+    weights : ``(K,)`` barycentric weights of the datasets (POT ``weights``);
+        uniform when ``None``.
+    solver_method : ``"lp_barycenter"`` calls ``ot.lp.barycenter`` (exact LP);
+        ``"bregman_barycenter"`` calls ``ot.bregman.barycenter`` (entropic).
+    reg, method, numItermax, stopThr : forwarded to ``ot.bregman.barycenter``
+        under the same name when not ``None`` (otherwise POT's default
+        applies); ``reg`` is required there. ``reg`` is relative to the cost
+        matrix actually passed, i.e. to the max-normalized one by default.
+    solver : forwarded to ``ot.lp.barycenter`` when not ``None``.
+        An argument the chosen solver lacks raises ``ValueError``.
+    histogram_eps : entropic solver only. Datasets usually occupy only some
+        of the shared clusters, so ``A`` contains exact zeros. Each column is
+        replaced by ``(1 - eps) * A[:, k] + eps / n_clusters`` (a mixture
+        with the uniform histogram, so columns still sum to exactly 1)
+        before calling ``ot.bregman.barycenter``. ``None`` means ``1e-12``,
+        which changes converged results only marginally but keeps
+        ``method="sinkhorn"`` finite when the Gibbs kernel underflows at
+        small ``reg``; ``0`` passes ``A`` unchanged. The LP solver handles
+        zeros exactly and always receives the unmodified ``A``.
+    normalize_cost : divide the cost matrix by its maximum (default, like the
+        other EnsembleOT entry points). The LP solution is unaffected; for
+        the entropic solver it fixes the scale ``reg`` refers to.
+
+    Returns
+    -------
+    list[BarycenterResult]
+        One barycenter per run: ``support`` holds the ``(n_clusters, d)``
+        shared centers and ``weights`` the barycenter mass on them (clipped
+        at 0 and renormalized to sum to 1). Combine runs with
+        :func:`pool_barycenters`.
+    """
+    if n_runs < 1:
+        raise ValueError("n_runs must be >= 1")
+    Xs = _validate_datasets(Xs)
+    K = len(Xs)
+    pot_kwargs = _forwarded_kwargs(
+        solver_method, _FIXED_SUPPORT_SOLVERS,
+        reg=reg, method=method, numItermax=numItermax, stopThr=stopThr,
+        solver=solver, histogram_eps=histogram_eps,
+    )
+    eps = float(pot_kwargs.pop("histogram_eps", _DEFAULT_HISTOGRAM_EPS))
+    if not 0.0 <= eps < 1.0:
+        raise ValueError("histogram_eps must be in [0, 1)")
+
+    pooled = np.concatenate(Xs, axis=0)
+    if not 1 <= n_clusters <= pooled.shape[0]:
+        raise ValueError("n_clusters must be in [1, total number of samples]")
+    weights_arr = (
+        np.full(K, 1.0 / K) if weights is None else _validate_simplex(weights, K, "weights")
+    )
+
+    return [
+        _single_run_fixed_support(
+            Xs,
+            pooled,
+            n_clusters=int(n_clusters),
+            weights=weights_arr,
+            clustering_method=clustering_method,
+            solver_method=solver_method,
+            pot_kwargs=pot_kwargs,
+            histogram_eps=eps,
+            normalize_cost=normalize_cost,
             seed=seed,
         )
         for seed in _run_seeds(random_state, n_runs)
