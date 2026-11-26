@@ -21,7 +21,7 @@ from typing import Sequence
 
 import numpy as np
 
-from .operator import ImplicitTransportOperator, _quantile_match
+from .operator import ImplicitTransportOperator, _divide_or_nan, _quantile_match
 
 
 def _stochastic_mixture(
@@ -33,10 +33,14 @@ def _stochastic_mixture(
 ) -> np.ndarray:
     """Stochastic lifting for an averaged plan = mixture over runs.
 
-    The aggregated plan is Σ_k w_k T_k. Because every run's rows carry equal
-    transport mass per sample, sampling from that mixture is: pick a run
-    ``k`` with probability ``w_k`` for each output sample, then draw from
-    that run's stochastic lift. No dense matrix is built.
+    The aggregated plan is Σ_k w_k T_k, so for output sample ``i`` the run
+    ``k`` must be drawn with probability ∝ ``w_k · mass_k(i)``, where
+    ``mass_k(i)`` is the transport mass run ``k`` gives that sample. For
+    balanced couplings the mass is the same in every run, so this is just
+    drawing ``k`` with probability ``w_k``; for partial / unbalanced
+    couplings a run that leaves the sample unmatched is never chosen for
+    it. Samples unmatched in every run get NaN. No dense matrix is built —
+    only an ``(n_out, R)`` mass table.
     """
     F = np.asarray(F)
     squeeze = F.ndim == 1
@@ -44,8 +48,21 @@ def _stochastic_mixture(
     rng = np.random.default_rng(random_state)
     n_out = operators[0].shape[0 if axis == "forward" else 1]
     n_feat = F2d.shape[1]
-    run_idx = rng.choice(len(operators), size=n_out, p=weights)
-    out = np.empty((n_out, n_feat), dtype=float)
+    weights = np.asarray(weights, dtype=float)
+    mass = np.stack(
+        [
+            op.transported_mass_x() if axis == "forward" else op.transported_mass_y()
+            for op in operators
+        ],
+        axis=1,
+    )                                                            # (n_out, R)
+    P = mass * weights[None, :]
+    tot = P.sum(axis=1)
+    cum = np.cumsum(P, axis=1)
+    u = rng.random(n_out) * tot
+    run_idx = np.minimum((u[:, None] >= cum).sum(axis=1), len(operators) - 1)
+    run_idx = np.where(tot > 0, run_idx, -1)                     # -1: unmatched everywhere
+    out = np.full((n_out, n_feat), np.nan, dtype=float)
     for k, op in enumerate(operators):
         sel = np.flatnonzero(run_idx == k)
         if sel.size == 0:
@@ -93,6 +110,26 @@ class MeanTransportOperator:
     def shape(self) -> tuple[int, int]:
         return self.operators[0].shape
 
+    def transported_mass_x(self, relative: bool = False) -> np.ndarray:
+        """Per-source-sample transport mass of the averaged plan, shape ``(n_x,)``.
+
+        The mean over runs of each run's
+        :meth:`ImplicitTransportOperator.transported_mass_x`. With partial /
+        unbalanced runs this is a soft "how consistently is this sample
+        matched" score.
+        """
+        acc = self.operators[0].transported_mass_x(relative=relative)
+        for op in self.operators[1:]:
+            acc = acc + op.transported_mass_x(relative=relative)
+        return acc / float(self.n_runs)
+
+    def transported_mass_y(self, relative: bool = False) -> np.ndarray:
+        """Per-target-sample transport mass of the averaged plan, shape ``(n_y,)``."""
+        acc = self.operators[0].transported_mass_y(relative=relative)
+        for op in self.operators[1:]:
+            acc = acc + op.transported_mass_y(relative=relative)
+        return acc / float(self.n_runs)
+
     def apply_to_features(
         self,
         Y: np.ndarray,
@@ -120,8 +157,7 @@ class MeanTransportOperator:
         denom = self.operators[0].apply_to_features(ones, normalize=False)
         for op in self.operators[1:]:
             denom = denom + op.apply_to_features(ones, normalize=False)
-        denom = np.where(np.abs(denom) > 1e-30, denom, 1.0)
-        return acc / (denom[:, None] if acc.ndim == 2 else denom)
+        return _divide_or_nan(acc, denom)
 
     def apply_transpose_to_features(
         self,
@@ -150,8 +186,7 @@ class MeanTransportOperator:
         denom = self.operators[0].apply_transpose_to_features(ones, normalize=False)
         for op in self.operators[1:]:
             denom = denom + op.apply_transpose_to_features(ones, normalize=False)
-        denom = np.where(np.abs(denom) > 1e-30, denom, 1.0)
-        return acc / (denom[:, None] if acc.ndim == 2 else denom)
+        return _divide_or_nan(acc, denom)
 
     def materialize_dense(self) -> np.ndarray:
         """Debug/testing only. Do not call on large problems."""
@@ -220,6 +255,22 @@ class WeightedMeanTransportOperator:
     def shape(self) -> tuple[int, int]:
         return self.operators[0].shape
 
+    def transported_mass_x(self, relative: bool = False) -> np.ndarray:
+        """Per-source-sample transport mass of the weighted-average plan, shape ``(n_x,)``."""
+        w = self.weights
+        acc = w[0] * self.operators[0].transported_mass_x(relative=relative)
+        for k in range(1, self.n_runs):
+            acc = acc + w[k] * self.operators[k].transported_mass_x(relative=relative)
+        return acc
+
+    def transported_mass_y(self, relative: bool = False) -> np.ndarray:
+        """Per-target-sample transport mass of the weighted-average plan, shape ``(n_y,)``."""
+        w = self.weights
+        acc = w[0] * self.operators[0].transported_mass_y(relative=relative)
+        for k in range(1, self.n_runs):
+            acc = acc + w[k] * self.operators[k].transported_mass_y(relative=relative)
+        return acc
+
     def apply_to_features(
         self,
         Y: np.ndarray,
@@ -247,8 +298,7 @@ class WeightedMeanTransportOperator:
         denom = w[0] * self.operators[0].apply_to_features(ones, normalize=False)
         for k in range(1, len(self.operators)):
             denom = denom + w[k] * self.operators[k].apply_to_features(ones, normalize=False)
-        denom = np.where(np.abs(denom) > 1e-30, denom, 1.0)
-        return acc / (denom[:, None] if acc.ndim == 2 else denom)
+        return _divide_or_nan(acc, denom)
 
     def apply_transpose_to_features(
         self,
@@ -277,8 +327,7 @@ class WeightedMeanTransportOperator:
         denom = w[0] * self.operators[0].apply_transpose_to_features(ones, normalize=False)
         for k in range(1, len(self.operators)):
             denom = denom + w[k] * self.operators[k].apply_transpose_to_features(ones, normalize=False)
-        denom = np.where(np.abs(denom) > 1e-30, denom, 1.0)
-        return acc / (denom[:, None] if acc.ndim == 2 else denom)
+        return _divide_or_nan(acc, denom)
 
     def materialize_dense(self) -> np.ndarray:
         """Debug/testing only. Do not call on large problems."""

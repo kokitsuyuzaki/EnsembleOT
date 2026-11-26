@@ -18,7 +18,7 @@ import numpy as np
 import ot
 
 from .clustering import cluster_means, cluster_samples_with_info, cluster_sizes
-from .metrics import cluster_shape_metrics, transport_metrics
+from .metrics import cluster_shape_metrics, cost_metrics, transport_metrics
 from .operator import ImplicitTransportOperator
 
 SolverMethod = Literal["sinkhorn", "emd"]
@@ -79,6 +79,7 @@ def _single_run(
 
     metrics = cluster_shape_metrics(labels_x, labels_y, sizes_x, sizes_y, T_cluster)
     metrics.update(transport_metrics(T_cluster, a, b))
+    metrics.update(cost_metrics(T_cluster, C))
     if "inertia" in info_x:
         metrics["clustering_inertia_x"] = float(info_x["inertia"])
     if "inertia" in info_y:

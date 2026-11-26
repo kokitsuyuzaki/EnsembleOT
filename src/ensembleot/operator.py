@@ -39,6 +39,28 @@ import numpy as np
 
 from .lifting import aggregate_by_label, broadcast_to_samples
 
+# Transport mass below this is treated as "this sample is not transported".
+_MASS_EPS = 1e-30
+
+
+def _divide_or_nan(num: np.ndarray, mass: np.ndarray) -> np.ndarray:
+    """``num / mass`` row-wise, with NaN rows where ``mass`` is (numerically) zero.
+
+    ``mass`` is the per-sample transport mass, shape ``(n,)`` or ``(n, 1)``;
+    ``num`` is ``(n,)`` or ``(n, F)``. A sample that receives no transport
+    mass has no barycentric image — this happens routinely with partial and
+    unbalanced couplings — so its row is NaN rather than a made-up value.
+    """
+    num = np.asarray(num, dtype=float)
+    mass = np.asarray(mass, dtype=float).reshape(-1)
+    ok = mass > _MASS_EPS
+    out = np.full(num.shape, np.nan, dtype=float)
+    if num.ndim == 1:
+        out[ok] = num[ok] / mass[ok]
+    else:
+        out[ok] = num[ok] / mass[ok][:, None]
+    return out
+
 
 def _stochastic_sample(
     T_plan: np.ndarray,
@@ -54,7 +76,8 @@ def _stochastic_sample(
     ``a``: draw an in-cluster ``b`` with probability ∝ ``T_plan[a, b]``, then
     pick a uniform random member of in-cluster ``b`` and copy its ``F_in``
     row. Unlike the barycentric mean this preserves the within-cluster
-    spread / tails of ``F_in``.
+    spread / tails of ``F_in``. Output samples whose cluster carries no
+    transport mass (possible with partial / unbalanced couplings) get NaN.
 
     ``T_plan`` is (K_out, K_in); ``F_in`` is (n_in, F) and the result is
     (len(out_idx), F). Only (K_out, K_in) and (m, K_in) temporaries are
@@ -88,7 +111,7 @@ def _stochastic_sample(
 
     out = F_in[targets].astype(float)                        # (m, F)
     if not valid.all():
-        out[~valid] = F_in.mean(axis=0)                      # fallback for empty support
+        out[~valid] = np.nan                                 # no transport mass: no image
     return out
 
 
@@ -102,18 +125,26 @@ def _quantile_match(values: np.ndarray, reference: np.ndarray) -> np.ndarray:
     Both inputs are (n, F); the remap is independent per feature column.
     Used by ``mode="matched"`` to restore the target feature distribution
     that the barycentric mean collapses, without changing spatial ranking.
+    Rows of ``values`` that are NaN (samples with no transport mass) are left
+    NaN and do not take part in the ranking.
     """
     n = values.shape[0]
     if n == 0:
         return values.astype(float)
-    out = np.empty_like(values, dtype=float)
-    span = max(n - 1, 1)
+    out = np.full(values.shape, np.nan, dtype=float)
     for k in range(values.shape[1]):
-        ranks = np.argsort(np.argsort(values[:, k], kind="stable"), kind="stable")
-        ref_sorted = np.sort(reference[:, k])
+        col = np.asarray(values[:, k], dtype=float)
+        ok = np.isfinite(col)                     # untransported rows stay NaN
+        n_ok = int(ok.sum())
+        ref = np.asarray(reference[:, k], dtype=float)
+        ref_sorted = np.sort(ref[np.isfinite(ref)])
         m = ref_sorted.shape[0]
-        idx = np.floor(ranks / span * (m - 1)).astype(int) if m > 1 else np.zeros(n, dtype=int)
-        out[:, k] = ref_sorted[idx]
+        if n_ok == 0 or m == 0:
+            continue
+        span = max(n_ok - 1, 1)
+        ranks = np.argsort(np.argsort(col[ok], kind="stable"), kind="stable")
+        idx = np.floor(ranks / span * (m - 1)).astype(int) if m > 1 else np.zeros(n_ok, dtype=int)
+        out[ok, k] = ref_sorted[idx]
     return out
 
 
@@ -214,9 +245,11 @@ class ImplicitTransportOperator:
           When ``normalize=True`` (default) each row is divided by its
           transport mass Σ_j T[i,j], giving a proper weighted average of
           the target features (the barycentric projection / conditional
-          mean E[Y | x_i]) on the same scale as ``Y``. ``normalize=False``
-          returns the raw linear operator action ``T @ Y`` (rows summing
-          to ``1/n_x``).
+          mean E[Y | x_i]) on the same scale as ``Y``. Source samples with
+          no transport mass (see :meth:`transported_mass_x`; possible with
+          partial / unbalanced couplings) have no image and come back as
+          NaN. ``normalize=False`` returns the raw linear operator action
+          ``T @ Y`` (rows summing to ``1/n_x`` for a balanced coupling).
 
         * ``"stochastic"`` — for each source sample draw a target cluster
           ∝ ``T_cluster[a,·]`` and copy a random member's feature row. This
@@ -239,9 +272,8 @@ class ImplicitTransportOperator:
         if mode == "barycentric":
             out = self._apply_raw(Y)
             if normalize:
-                denom = self._apply_raw(np.ones((self.n_y, 1), dtype=out.dtype))   # (n_x, 1)
-                denom = np.where(np.abs(denom) > 1e-30, denom, 1.0)
-                out = out / denom
+                denom = self._apply_raw(np.ones((self.n_y, 1), dtype=float))       # (n_x, 1)
+                out = _divide_or_nan(out, denom)
         elif mode == "stochastic":
             rng = np.random.default_rng(random_state)
             out = self._stochastic_subset(Y, rng, np.arange(self.n_x))
@@ -281,9 +313,8 @@ class ImplicitTransportOperator:
         if mode == "barycentric":
             out = self._apply_transpose_raw(X)
             if normalize:
-                denom = self._apply_transpose_raw(np.ones((self.n_x, 1), dtype=out.dtype))  # (n_y, 1)
-                denom = np.where(np.abs(denom) > 1e-30, denom, 1.0)
-                out = out / denom
+                denom = self._apply_transpose_raw(np.ones((self.n_x, 1), dtype=float))      # (n_y, 1)
+                out = _divide_or_nan(out, denom)
         elif mode == "stochastic":
             rng = np.random.default_rng(random_state)
             out = self._stochastic_transpose_subset(X, rng, np.arange(self.n_y))
@@ -296,6 +327,33 @@ class ImplicitTransportOperator:
                 f"unknown mode {mode!r} (use 'barycentric', 'stochastic' or 'matched')"
             )
         return out[:, 0] if squeeze else out
+
+    def transported_mass_x(self, relative: bool = False) -> np.ndarray:
+        """Per-source-sample transport mass ``Σ_j T[i, j]``, shape ``(n_x,)``.
+
+        For a balanced coupling every entry equals ``1/n_x``. Partial and
+        unbalanced couplings move less (or, for unbalanced, possibly more)
+        mass per sample; a value of 0 means the sample is left unmatched.
+        ``relative=True`` rescales by ``n_x`` so that 1.0 means "all of this
+        sample's original mass is transported". Computed from the cluster
+        row sums — no dense matrix.
+        """
+        mx = np.asarray(self.cluster_mass_x, dtype=float)
+        row = np.asarray(self.T_cluster, dtype=float).sum(axis=1)
+        per_cluster = np.divide(row, mx, out=np.zeros_like(row), where=mx > 0)
+        out = per_cluster[self.labels_x]
+        return out * self.n_x if relative else out
+
+    def transported_mass_y(self, relative: bool = False) -> np.ndarray:
+        """Per-target-sample transport mass ``Σ_i T[i, j]``, shape ``(n_y,)``.
+
+        Symmetric to :meth:`transported_mass_x`.
+        """
+        my = np.asarray(self.cluster_mass_y, dtype=float)
+        col = np.asarray(self.T_cluster, dtype=float).sum(axis=0)
+        per_cluster = np.divide(col, my, out=np.zeros_like(col), where=my > 0)
+        out = per_cluster[self.labels_y]
+        return out * self.n_y if relative else out
 
     def materialize_entry(self, i: int, j: int) -> float:
         a = int(self.labels_x[i])

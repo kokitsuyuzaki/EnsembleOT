@@ -44,6 +44,13 @@ def transport_metrics(
     - ``marginal_error_row``: max_i |Σ_j T_ij - a_i|
     - ``marginal_error_col``: max_j |Σ_i T_ij - b_j|
     - ``transport_entropy``:  -Σ T_ij log(T_ij + eps)   (log(0)-safe)
+    - ``transported_mass``:   Σ_ij T_ij
+
+    For balanced solvers the marginal errors measure solver accuracy and
+    ``transported_mass`` is 1. For partial / unbalanced solvers the coupling
+    is *meant* to deviate from ``a`` / ``b``: there the "errors" report how
+    much mass was dropped or created, not a defect, so they should not be
+    used as a quality score for weighting runs.
     """
     T = np.asarray(T_cluster, dtype=np.float64)
     row = T.sum(axis=1)
@@ -55,4 +62,25 @@ def transport_metrics(
         "marginal_error_row": marginal_row,
         "marginal_error_col": marginal_col,
         "transport_entropy": entropy,
+        "transported_mass": float(T.sum()),
     }
+
+
+def cost_metrics(T_cluster: np.ndarray, M: np.ndarray) -> dict[str, float]:
+    """Linear transport cost ``<T, M>`` of the cluster-level coupling.
+
+    ``M`` is the cluster-level cost matrix actually handed to the solver
+    (i.e. after any max-normalization), so values are comparable across
+    runs and across a sweep of ``m`` / ``reg_m``.
+    """
+    T = np.asarray(T_cluster, dtype=np.float64)
+    return {"transport_cost": float(np.sum(T * np.asarray(M, dtype=np.float64)))}
+
+
+def partial_mass_metrics(T_cluster: np.ndarray, m: float) -> dict[str, float]:
+    """How closely a partial coupling hits its requested mass ``m``.
+
+    - ``mass_error``: |Σ_ij T_ij - m|
+    """
+    T = np.asarray(T_cluster, dtype=np.float64)
+    return {"mass_error": float(abs(T.sum() - float(m)))}
